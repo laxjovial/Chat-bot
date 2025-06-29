@@ -40,7 +40,11 @@ def load_user_config(user_id: str) -> dict:
 
 
 def get_config(user_id: str = "default") -> dict:
-    """Returns merged global + user config."""
+    user_file = USER_CONFIG_DIR / f"{user_id}.yml"
+
+    if not user_file.exists():
+        create_user_config(user_id)  # 🔁 auto-create here
+
     config = load_global_config()
     user_config = load_user_config(user_id)
 
