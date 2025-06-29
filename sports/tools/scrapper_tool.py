@@ -4,6 +4,7 @@ import requests
 import yaml
 from bs4 import BeautifulSoup
 from langchain_core.tools import tool
+from sports.config.config_manager import get_api_key
 
 # === Load search API config from unified YAML ===
 def load_search_apis():
@@ -17,7 +18,7 @@ def load_search_apis():
 SEARCH_APIS = load_search_apis()
 
 @tool
-def scrape_web(query: str, max_chars: int = 1000) -> str:
+def scrape_web(query: str, user_token: str = "default", max_chars: int = 1000) -> str:
     """
     Smart search fallback: tries Search APIs first, then Wikipedia, then Google scraping.
     Returns first valid response or explains failure.
@@ -31,7 +32,7 @@ def scrape_web(query: str, max_chars: int = 1000) -> str:
         try:
             endpoint = api.get("endpoint")
             key_name = api.get("key_name")
-            key_value = api.get("key_value")
+            key_value = get_api_key(api.get("name", ""), user_token) if api.get("key_value") == "USE_USER_KEY" else api.get("key_value")
             query_param = api.get("query_param", "q")
             in_header = api.get("in_header", False)
             headers_api = api.get("headers", {}).copy()
@@ -92,6 +93,8 @@ def extract_snippets_from_api(data: dict) -> list:
         return [r.get("snippet") for r in data["organic_results"] if r.get("snippet")]
     elif "value" in data:  # ContextualWeb
         return [r.get("description") for r in data["value"] if r.get("description")]
+    return []
+
     return []
 
     return []
