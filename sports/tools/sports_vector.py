@@ -3,25 +3,27 @@
 import os
 import json
 from typing import List
+from pathlib import Path
 from langchain_community.vectorstores import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
-# === Paths and Settings ===
-VECTOR_PATH = "sports/chroma/default/"
-OFFLINE_FILE = "sports/data/offline_sports.json"
-EMBED_MODE = os.getenv("EMBED_MODE", "openai")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-ada-002")
+from sports.config.config_manager import get_embedding_config
+
+# === Base Paths ===
+BASE_VECTOR_DIR = Path("sports/chroma")
+OFFLINE_FILE = Path("sports/data/offline_sports.json")
 
 
-# === Embedding Selection ===
-def get_embedder():
-    if EMBED_MODE == "openai":
-        return OpenAIEmbeddings(model=EMBED_MODEL)
+# === Embedding Selection per user ===
+def get_embedder(user_token: str):
+    config = get_embedding_config(user_token)
+    if config["mode"] == "openai":
+        return OpenAIEmbeddings(model=config["model"])
     else:
-        return HuggingFaceEmbeddings(model_name=EMBED_MODEL)
+        return HuggingFaceEmbeddings(model_name=config["model"])
 
 
 # === Load & Embed Data ===
@@ -32,19 +34,25 @@ def load_offline_docs() -> List[Document]:
     return [Document(page_content=json.dumps(item)) for item in records]
 
 
-def build_vectorstore():
+def build_vectorstore(user_token: str = "default"):
     """Builds and saves the Chroma vector DB from offline_sports.json."""
     docs = load_offline_docs()
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     chunks = splitter.split_documents(docs)
-    vectordb = Chroma.from_documents(chunks, get_embedder(), persist_directory=VECTOR_PATH)
+
+    vector_dir = BASE_VECTOR_DIR / user_token / "sports"
+    vectordb = Chroma.from_documents(chunks, get_embedder(user_token), persist_directory=str(vector_dir))
     vectordb.persist()
-    print("✅ Vectorstore built at:", VECTOR_PATH)
+    print("✅ Vectorstore built at:", vector_dir)
 
 
-def query_vectorstore(query: str, k: int = 3) -> str:
+def query_vectorstore(query: str, user_token: str = "default", k: int = 3) -> str:
     """Search the vector DB for semantic matches."""
-    vectordb = Chroma(persist_directory=VECTOR_PATH, embedding_function=get_embedder())
+    vector_dir = BASE_VECTOR_DIR / user_token / "sports"
+    if not vector_dir.exists():
+        return "No vector results found."
+
+    vectordb = Chroma(persist_directory=str(vector_dir), embedding_function=get_embedder(user_token))
     results = vectordb.similarity_search(query, k=k)
     if not results:
         return "No vector results found."
@@ -53,5 +61,8 @@ def query_vectorstore(query: str, k: int = 3) -> str:
 
 # CLI testing (optional)
 if __name__ == "__main__":
-    build_vectorstore()
-    print(query_vectorstore("Which club has won the most EPL trophies?"))
+    from utils.user_manager import get_user_token
+    token = get_user_token("victor@gmail.com")
+    build_vectorstore(token)
+    print(query_vectorstore("Which club has won the most EPL trophies?", token))
+
