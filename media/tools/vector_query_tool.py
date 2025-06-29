@@ -47,6 +47,6 @@ def QueryUploadedDocs(
     combined = "\n\n".join([r.page_content.strip() for r in results])
 
     if export:
-        export_vector_results(results, query=query, section=section, user_id=user_token)
+        export_vector_results(results, query=query, section=section, user_token=user_token)
 
     return combined
