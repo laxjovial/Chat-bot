@@ -11,15 +11,16 @@ from langchain_community.document_loaders import (
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.chains.summarize import load_summarize_chain
 from langchain_core.documents import Document
+from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 
 from media.config.config_manager import get_model_settings
+from utils.user_manager import get_user_token
 
 
 # === Load and chunk file ===
 def load_and_chunk(file_path: Path) -> List[Document]:
     ext = file_path.suffix.lower()
-
     if ext == ".pdf":
         docs = PyPDFLoader(str(file_path)).load()
     elif ext == ".txt":
@@ -37,12 +38,9 @@ def load_and_chunk(file_path: Path) -> List[Document]:
     return splitter.split_documents(docs)
 
 
-# === Summarize the file ===
-def summarize_document(file_path: Path, user_id: str = "default") -> str:
-    """
-    Generates a summary from the uploaded document.
-    """
-    model_settings = get_model_settings(user_id)
+# === Summarize a file ===
+def summarize_document(file_path: Path, user_token: str = "default") -> str:
+    model_settings = get_model_settings(user_token)
     llm = ChatOpenAI(model=model_settings["llm_model"], temperature=model_settings["temperature"])
 
     docs = load_and_chunk(file_path)
@@ -50,7 +48,9 @@ def summarize_document(file_path: Path, user_id: str = "default") -> str:
     return chain.run(docs)
 
 
-# === CLI Testing ===
+# === CLI Test ===
 if __name__ == "__main__":
-    path = Path("media/uploads/victor/sample_show_guide.pdf")
-    print(summarize_document(path, user_id="victor"))
+    from utils.user_manager import get_user_token
+    test_file = Path("media/uploads/usr_xyz789/media/sample_show_notes.pdf")
+    token = get_user_token("victor@gmail.com")
+    print(summarize_document(test_file, user_token=token))
