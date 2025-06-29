@@ -1,0 +1,41 @@
+# === MOVIE/TV APIs ===
+- name: TMDb
+  type: media
+  endpoint: https://api.themoviedb.org/3/search/multi
+  key_name: api_key
+  key_value: YOUR_TMDB_KEY
+  query_param: query
+  in_header: false
+  response_format: json
+
+# === MUSIC APIs ===
+- name: Deezer
+  type: media
+  endpoint: https://api.deezer.com/search
+  key_name: ""
+  key_value: ""
+  query_param: q
+  in_header: false
+  response_format: json
+
+# === ANIME APIs ===
+- name: Jikan (MyAnimeList)
+  type: media
+  endpoint: https://api.jikan.moe/v4/anime
+  key_name: ""
+  key_value: ""
+  query_param: q
+  in_header: false
+  response_format: json
+
+# === YouTube Data API (optional) ===
+- name: YouTube
+  type: media
+  endpoint: https://www.googleapis.com/youtube/v3/search
+  key_name: key
+  key_value: YOUR_YOUTUBE_API_KEY
+  query_param: q
+  in_header: false
+  response_format: json
+
+# === Add more below ===
