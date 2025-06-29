@@ -5,11 +5,12 @@ import yaml
 from bs4 import BeautifulSoup
 from langchain_core.tools import tool
 
-# === Load search API config ===
+# === Load search API config from unified YAML ===
 def load_search_apis():
     try:
-        with open("sports/data/search_apis.yaml", "r") as f:
-            return yaml.safe_load(f)
+        with open("sports/data/sports_apis.yaml", "r") as f:
+            all_apis = yaml.safe_load(f)
+            return [api for api in all_apis if api.get("type") == "search"]
     except:
         return []
 
@@ -85,11 +86,12 @@ def scrape_web(query: str, max_chars: int = 1000) -> str:
 
     return "Nothing found via Search APIs, Wikipedia, or scraping."
 
-
 def extract_snippets_from_api(data: dict) -> list:
     """Extracts text snippets from known search APIs. Customize per provider."""
     if "organic_results" in data:
         return [r.get("snippet") for r in data["organic_results"] if r.get("snippet")]
     elif "value" in data:  # ContextualWeb
         return [r.get("description") for r in data["value"] if r.get("description")]
+    return []
+
     return []
