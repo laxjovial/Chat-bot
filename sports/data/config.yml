@@ -1,11 +1,17 @@
 # sports/data/config.yml
 
-llm_model: llama3                      # Default model for LLM responses
-temperature: 0.3                       # Default creativity level (0 = deterministic)
-embedding_mode: openai                # openai or huggingface
-embedding_model: text-embedding-ada-002
-tier: free                             # Default user tier
+# === Default LLM Configuration ===
+llm_model: llama3                           # Default model for LLM responses (local or cloud)
+temperature: 0.3                            # Default creativity level (0 = deterministic)
 
+# === Embedding Configuration ===
+embedding_mode: openai                      # Supported: openai, huggingface
+embedding_model: text-embedding-ada-002     # OpenAI or HF model name
+
+# === Default Access Tier ===
+tier: free                                  # Tier used when no specific user config exists
+
+# === Global Fallback API Keys (used if not overridden in user config) ===
 api_keys:
   openai: YOUR_GLOBAL_OPENAI_KEY
   serpapi: YOUR_GLOBAL_SERPAPI_KEY
