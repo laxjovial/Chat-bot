@@ -20,6 +20,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
 from sports.config.config_manager import get_embedding_config
+from utils.user_manager import get_user_token
 
 # === Base Upload & Chroma Paths ===
 BASE_UPLOAD_DIR = Path("sports/uploads")
@@ -28,8 +29,8 @@ SUPPORTED_EXTS = [".pdf", ".txt", ".csv", ".md", ".docx"]
 
 
 # === Embedding Selector ===
-def get_embedder(user_id: str):
-    config = get_embedding_config(user_id)
+def get_embedder(user_token: str):
+    config = get_embedding_config(user_token)
     if config["mode"] == "openai":
         return OpenAIEmbeddings(model=config["model"])
     else:
@@ -54,12 +55,12 @@ def load_file(file_path: Path) -> List[Document]:
 
 
 # === Upload and Vectorize ===
-def process_upload(file, user_id: str, section: str = "sports") -> str:
+def process_upload(file, user_token: str, section: str = "sports") -> str:
     """
     Saves and vectorizes uploaded file for user/section.
     """
     # 1. Save file
-    upload_dir = BASE_UPLOAD_DIR / user_id / section
+    upload_dir = BASE_UPLOAD_DIR / user_token / section
     upload_dir.mkdir(parents=True, exist_ok=True)
     file_ext = Path(file.name).suffix
     if file_ext.lower() not in SUPPORTED_EXTS:
@@ -76,8 +77,8 @@ def process_upload(file, user_id: str, section: str = "sports") -> str:
     chunks = splitter.split_documents(docs)
 
     # 3. Vectorize
-    vector_dir = BASE_VECTOR_DIR / user_id / section
-    embedder = get_embedder(user_id)
+    vector_dir = BASE_VECTOR_DIR / user_token / section
+    embedder = get_embedder(user_token)
     vectordb = Chroma.from_documents(chunks, embedder, persist_directory=str(vector_dir))
     vectordb.persist()
 
@@ -85,9 +86,10 @@ def process_upload(file, user_id: str, section: str = "sports") -> str:
 
 
 # === Cleanup (optional) ===
-def delete_user_section_vectors(user_id: str, section: str):
-    dir_path = BASE_VECTOR_DIR / user_id / section
+def delete_user_section_vectors(user_token: str, section: str):
+    dir_path = BASE_VECTOR_DIR / user_token / section
     if dir_path.exists():
         shutil.rmtree(dir_path)
         return True
     return False
+
