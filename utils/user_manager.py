@@ -26,7 +26,7 @@ def save_user_data(data):
     with open(USER_DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-def create_user(username: str, email: str, tier="free", security_q="", security_a="") -> str:
+def create_user(username: str, email: str, tier="free", password="", security_q="", security_a="") -> str:
     """
     Creates a new user with a unique token.
     Returns the user token.
@@ -43,9 +43,10 @@ def create_user(username: str, email: str, tier="free", security_q="", security_
         "username": username,
         "email": email,
         "tier": tier,
+        "password": password,  # NOTE: can hash later for security
         "created_at": datetime.utcnow().isoformat(),
         "security_q": security_q,
-        "security_a": security_a  # NOTE: You can hash this later for security
+        "security_a": security_a
     }
     save_user_data(users)
     return token
@@ -70,22 +71,36 @@ def find_user_by_email(email: str) -> dict:
             return {"token": token, **u}
     return {}
 
+def verify_password(email: str, input_password: str) -> bool:
+    """
+    Compares input password with stored password for the given email.
+    """
+    user = find_user_by_email(email)
+    return user and user.get("password") == input_password
+
 def verify_recovery(email: str, question: str, answer: str) -> bool:
     u = find_user_by_email(email)
     return u and u.get("security_q") == question and u.get("security_a") == answer
 
-def send_token_to_email(email: str):
+def send_token_to_email(email: str, token: str = None):
     """
-    (Mock) Sends token to email. Replace this with SMTP integration.
+    (Mock) Sends token or OTP to email. Replace with SMTP for production.
     """
-    u = find_user_by_email(email)
-    if u:
-        print(f"Sending user token {u['token']} to {email}")
+    if not token:
+        user = find_user_by_email(email)
+        if user:
+            token = user["token"]
+    if token:
+        print(f"📬 Sending token or OTP '{token}' to {email}")
         return True
     return False
 
 # === CLI Example ===
 if __name__ == "__main__":
-    t = create_user("Victor", "victor@gmail.com", tier="pro", security_q="Best team?", security_a="Arsenal")
+    t = create_user(
+        "Victor", "victor@gmail.com", tier="pro", password="arsenal123",
+        security_q="Best team?", security_a="Arsenal"
+    )
     print(f"Created user token: {t}")
     print("Resolved:", lookup_user_by_token(t))
+
