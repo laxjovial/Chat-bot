@@ -8,6 +8,7 @@ from typing import Optional
 from langchain_core.tools import tool
 from sports.tools.scraper_tool import scrape_web
 from sports.tools.sports_vector import query_vectorstore
+from sports.config.config_manager import get_api_key
 
 # === Load unified sports APIs from YAML ===
 def load_sports_apis():
@@ -19,7 +20,7 @@ SPORTS_APIS = load_sports_apis()
 
 # === Main Unified Sports Tool (API + vector + scraper) ===
 @tool
-def SportsTool(query: str, export: Optional[bool] = False, allow_scrape: Optional[bool] = False) -> str:
+def SportsTool(query: str, user_token: str = "default", export: Optional[bool] = False, allow_scrape: Optional[bool] = False) -> str:
     """
     Handles sports-related queries using API, vector fallback, and web scraping.
     """
@@ -27,7 +28,7 @@ def SportsTool(query: str, export: Optional[bool] = False, allow_scrape: Optiona
         name = api.get("name")
         endpoint = api.get("endpoint")
         key_name = api.get("key_name")
-        key_value = api.get("key_value")
+        key_value = get_api_key(name, user_token) if api.get("key_value") == "USE_USER_KEY" else api.get("key_value")
         headers = api.get("headers", {})
         params = api.get("default_params", {})
         query_param = api.get("query_param", "q")
@@ -50,13 +51,13 @@ def SportsTool(query: str, export: Optional[bool] = False, allow_scrape: Optiona
             continue
 
     # === Offline fallback ===
-    fallback = query_vectorstore(query)
+    fallback = query_vectorstore(query, user_token=user_token)
     if fallback and fallback != "No vector results found.":
         return fallback
 
     # === Scraping fallback ===
     if allow_scrape:
-        scraped = scrape_web(query)
+        scraped = scrape_web(query, user_token=user_token)
         if scraped:
             return scraped
 
@@ -85,4 +86,5 @@ def parse_response(api_name: str, data: dict, query: str) -> str:
         return f"[From {api_name}] Results for '{query}':\n" + result
 
     return "[Generic API Response]\n" + str(data)[:1000]
+
 
