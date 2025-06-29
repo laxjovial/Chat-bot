@@ -4,6 +4,7 @@ import os
 import json
 from datetime import datetime
 from typing import Optional
+from utils.user_manager import get_user_token
 
 EXPORT_FORMATS = ["txt", "json", "md"]
 BASE_EXPORT_DIR = "sports/exports"
@@ -15,7 +16,7 @@ os.makedirs(BASE_EXPORT_DIR, exist_ok=True)
 def export_response(
     text: str,
     section: str = "sports",
-    user_id: str = "default",
+    user_token: str = "default",
     format: str = "txt",
     filename: Optional[str] = None
 ) -> str:
@@ -26,7 +27,7 @@ def export_response(
     if format not in EXPORT_FORMATS:
         raise ValueError(f"Unsupported export format: {format}")
 
-    export_dir = os.path.join(BASE_EXPORT_DIR, user_id, section)
+    export_dir = os.path.join(BASE_EXPORT_DIR, user_token, section)
     os.makedirs(export_dir, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -49,11 +50,11 @@ def export_response(
     return filepath
 
 
-def export_vector_results(results: list, query: str, section: str = "sports", user_id: str = "default") -> str:
+def export_vector_results(results: list, query: str, section: str = "sports", user_token: str = "default") -> str:
     """
     Exports a list of Document results from vector query with source chunks.
     """
-    export_dir = os.path.join(BASE_EXPORT_DIR, user_id, section)
+    export_dir = os.path.join(BASE_EXPORT_DIR, user_token, section)
     os.makedirs(export_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"vector_query_{timestamp}.md"
@@ -72,5 +73,5 @@ def export_vector_results(results: list, query: str, section: str = "sports", us
 # Optional test
 if __name__ == "__main__":
     dummy = "Man City won the EPL 6 times."
-    print(export_response(dummy, section="sports", user_id="admin", format="txt"))
-
+    token = get_user_token("victor@gmail.com")
+    print(export_response(dummy, section="sports", user_token=token, format="txt"))
