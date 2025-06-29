@@ -44,7 +44,6 @@ def get_config(user_id: str = "default") -> dict:
     config = load_global_config()
     user_config = load_user_config(user_id)
 
-    # Merge user values
     for key, val in user_config.items():
         if isinstance(val, dict) and key in config:
             config[key].update(val)
@@ -79,9 +78,33 @@ def get_user_tier(user_id: str = "default") -> str:
     return get_config(user_id).get("tier", "free")
 
 
-# === Example CLI test ===
+def create_user_config(user_id: str, config: dict = None) -> bool:
+    user_file = USER_CONFIG_DIR / f"{user_id}.yml"
+    if not user_file.exists():
+        user_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(user_file, "w") as f:
+            yaml.dump(config or DEFAULT_CONFIG, f)
+        return True
+    return False
+
+
+def set_api_key(service: str, key_value: str, user_id: str = "default") -> None:
+    user_file = USER_CONFIG_DIR / f"{user_id}.yml"
+    config = load_user_config(user_id)
+    if "api_keys" not in config:
+        config["api_keys"] = {}
+    config["api_keys"][service] = key_value
+    user_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(user_file, "w") as f:
+        yaml.dump(config, f)
+
+
+# CLI example test
 if __name__ == "__main__":
     print(get_model_settings("admin"))
     print(get_api_key("openai", "admin"))
     print(get_embedding_config("admin"))
     print(get_user_tier("admin"))
+    create_user_config("testuser")
+    set_api_key("openai", "new-key-123", "testuser")
+
