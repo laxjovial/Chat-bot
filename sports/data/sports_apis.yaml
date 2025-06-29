@@ -1,29 +1,28 @@
 # === SPORTS APIs ===
-- name: TheSportsDB                    # Friendly name of the API
-  type: sports                         # Tag to distinguish category
+- name: TheSportsDB                     # Friendly name of the API
+  type: sports                          # Category: sports
   endpoint: https://www.thesportsdb.com/api/v1/json/1/searchplayers.php
-  key_name: apikey                     # The name of the API key field
-  key_value: YOUR_THESPORTSDB_KEY      # Replace with actual key
-  query_param: p                       # Query string parameter (e.g., p=Messi)
-  in_header: false                     # false = key in params; true = key in headers
-  response_format: json                # Response format
+  key_name: apikey                      # API key parameter name
+  key_value: USE_USER_KEY               # Placeholder, fetched via config_manager
+  query_param: p                        # Query param: p=Messi
+  in_header: false                      # Place key in params
+  response_format: json
 
 - name: API-Football
   type: sports
   endpoint: https://v3.football.api-sports.io/players
   key_name: x-apisports-key
-  key_value: YOUR_APIFOOTBALL_KEY
+  key_value: USE_USER_KEY
   query_param: search
-  in_header: true
+  in_header: true                       # Place key in header
   response_format: json
-
 
 # === SEARCH APIs ===
 - name: SerpAPI
   type: search
   endpoint: https://serpapi.com/search
   key_name: api_key
-  key_value: YOUR_SERPAPI_KEY
+  key_value: USE_USER_KEY
   query_param: q
   in_header: false
   response_format: json
@@ -32,7 +31,7 @@
   type: search
   endpoint: https://contextualwebsearch-websearch-v1.p.rapidapi.com/api/Search/WebSearchAPI
   key_name: X-RapidAPI-Key
-  key_value: YOUR_RAPID_KEY
+  key_value: USE_USER_KEY
   query_param: q
   in_header: true
   response_format: json
