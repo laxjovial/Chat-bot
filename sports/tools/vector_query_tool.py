@@ -16,8 +16,8 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 import os
 
 # === Get Embedder Based on Config ===
-def get_embedder(user_id: str):
-    config = get_embedding_config(user_id)
+def get_embedder(user_token: str):
+    config = get_embedding_config(user_token)
     if config["mode"] == "openai":
         return OpenAIEmbeddings(model=config["model"])
     else:
@@ -26,16 +26,16 @@ def get_embedder(user_id: str):
 
 # === Main Vector Query Tool ===
 @tool
-def QueryUploadedDocs(query: str, user_id: str = "default", section: str = "sports", export: Optional[bool] = False) -> str:
+def QueryUploadedDocs(query: str, user_token: str = "default", section: str = "sports", export: Optional[bool] = False) -> str:
     """
     Queries uploaded and indexed documents for a user and section using vector similarity search.
     Returns text chunks or saves results if export is enabled.
     """
-    vector_path = f"sports/chroma/{user_id}/{section}"
+    vector_path = f"sports/chroma/{user_token}/{section}"
     if not os.path.exists(vector_path):
         return "No indexed data found for this section. Please upload a document first."
 
-    vectordb = Chroma(persist_directory=vector_path, embedding_function=get_embedder(user_id))
+    vectordb = Chroma(persist_directory=vector_path, embedding_function=get_embedder(user_token))
     results: list[Document] = vectordb.similarity_search(query, k=5)
 
     if not results:
@@ -44,6 +44,7 @@ def QueryUploadedDocs(query: str, user_id: str = "default", section: str = "spor
     combined = "\n\n".join([r.page_content.strip() for r in results])
 
     if export:
-        export_vector_results(results, query=query, section=section, user_id=user_id)
+        export_vector_results(results, query=query, section=section, user_token=user_token)
 
     return combined
+
