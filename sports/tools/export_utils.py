@@ -3,18 +3,24 @@
 import os
 import json
 from datetime import datetime
+from typing import Optional
 
-# === Supported export formats ===
 EXPORT_FORMATS = ["txt", "json", "md"]
 BASE_EXPORT_DIR = "sports/exports"
 
-# === Ensure base directory exists ===
+# Ensure base directory exists
 os.makedirs(BASE_EXPORT_DIR, exist_ok=True)
 
 
-def export_response(text: str, section: str = "sports", user_id: str = "default", format: str = "txt") -> str:
+def export_response(
+    text: str,
+    section: str = "sports",
+    user_id: str = "default",
+    format: str = "txt",
+    filename: Optional[str] = None
+) -> str:
     """
-    Saves the assistant response in the desired format for the user and section.
+    Saves assistant response or vector result for the user and section.
     Returns the full file path of the export.
     """
     if format not in EXPORT_FORMATS:
@@ -24,11 +30,15 @@ def export_response(text: str, section: str = "sports", user_id: str = "default"
     os.makedirs(export_dir, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"response_{timestamp}.{format}"
+    if not filename:
+        filename = f"response_{timestamp}.{format}"
+    else:
+        filename = f"{filename}.{format}" if not filename.endswith(f".{format}") else filename
+
     filepath = os.path.join(export_dir, filename)
 
-    # Save content based on format
-    if format == "txt" or format == "md":
+    # Save based on format
+    if format in ["txt", "md"]:
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(text)
 
@@ -39,7 +49,28 @@ def export_response(text: str, section: str = "sports", user_id: str = "default"
     return filepath
 
 
-# === Optional CLI test ===
+def export_vector_results(results: list, query: str, section: str = "sports", user_id: str = "default") -> str:
+    """
+    Exports a list of Document results from vector query with source chunks.
+    """
+    export_dir = os.path.join(BASE_EXPORT_DIR, user_id, section)
+    os.makedirs(export_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"vector_query_{timestamp}.md"
+    filepath = os.path.join(export_dir, filename)
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(f"## Query: {query}\n\n")
+        for i, doc in enumerate(results):
+            f.write(f"### Result {i+1}\n")
+            f.write(doc.page_content.strip())
+            f.write("\n\n")
+
+    return filepath
+
+
+# Optional test
 if __name__ == "__main__":
-    dummy = "Lionel Messi has scored over 800 career goals."
+    dummy = "Man City won the EPL 6 times."
     print(export_response(dummy, section="sports", user_id="admin", format="txt"))
+
