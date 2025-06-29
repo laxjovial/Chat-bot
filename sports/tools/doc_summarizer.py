@@ -15,6 +15,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 
 from sports.config.config_manager import get_model_settings
+from utils.user_manager import get_user_token
 
 # === Load and chunk file ===
 def load_and_chunk(file_path: Path) -> List[Document]:
@@ -37,8 +38,8 @@ def load_and_chunk(file_path: Path) -> List[Document]:
 
 
 # === Summarize a file ===
-def summarize_document(file_path: Path, user_id: str = "default") -> str:
-    model_settings = get_model_settings(user_id)
+def summarize_document(file_path: Path, user_token: str = "default") -> str:
+    model_settings = get_model_settings(user_token)
     llm = ChatOpenAI(model=model_settings["llm_model"], temperature=model_settings["temperature"])
 
     docs = load_and_chunk(file_path)
@@ -50,5 +51,7 @@ def summarize_document(file_path: Path, user_id: str = "default") -> str:
 
 # === CLI Test ===
 if __name__ == "__main__":
-    test_file = Path("sports/uploads/victor/legal/sample_contract.pdf")
-    print(summarize_document(test_file, user_id="victor"))
+    from utils.user_manager import get_user_token
+    test_file = Path("sports/uploads/usr_abc123/legal/sample_contract.pdf")
+    token = get_user_token("victor@gmail.com")
+    print(summarize_document(test_file, user_token=token))
