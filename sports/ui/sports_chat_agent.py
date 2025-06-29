@@ -9,6 +9,7 @@ from sports.tools.sports_tool import SportsTool
 from sports.config.config_manager import get_user_tier, get_model_settings
 from sports.tools.import_utils import process_upload
 from sports.tools.export_utils import export_response
+from utils.user_manager import get_user_token
 
 from pathlib import Path
 from io import BytesIO
@@ -18,15 +19,16 @@ st.title("🤖 Your Sports Assistant Agent")
 
 # === Memory Setup ===
 history = StreamlitChatMessageHistory()
-user_id = st.text_input("User ID", value="victor")
+username_or_email = st.text_input("User ID or Email", value="victor")
+user_token = get_user_token(username_or_email)
 section = "sports"
 
 # === Upload Block ===
 with st.expander("📁 Upload a Document"):
     file = st.file_uploader("Upload a PDF, TXT, DOCX, CSV, or MD", type=["pdf", "txt", "md", "csv", "docx"])
-    if file and st.button("Embed Document to Memory"):
+    if file and user_token and st.button("Embed Document to Memory"):
         try:
-            msg = process_upload(file, user_id=user_id, section=section)
+            msg = process_upload(file, user_token=user_token, section=section)
             st.success(msg)
         except Exception as e:
             st.error(f"Upload failed: {e}")
@@ -44,28 +46,28 @@ if query:
 
     # === Routing Logic ===
     answer = ""
-    tier = get_user_tier(user_id)
+    tier = get_user_tier(user_token)
 
     with st.spinner("Thinking..."):
         # Rule 1: API questions
         if any(kw in query.lower() for kw in ["who won", "how many", "player", "team", "trophies"]):
-            answer = SportsTool.run(query)
+            answer = SportsTool.invoke({"query": query, "user_token": user_token})
 
         # Rule 2: Summarization request
         elif "summarize" in query.lower():
-            summary_dir = Path(f"sports/uploads/{user_id}/{section}")
+            summary_dir = Path(f"sports/uploads/{user_token}/{section}")
             files = list(summary_dir.glob("*.pdf")) + list(summary_dir.glob("*.txt"))
             if not files:
                 answer = "No files to summarize. Please upload a document."
             else:
                 try:
-                    answer = summarize_document(files[0], user_id=user_id)
+                    answer = summarize_document(files[0], user_id=user_token)
                 except Exception as e:
                     answer = f"Summarization failed: {e}"
 
         # Rule 3: Vector-based fallback (for uploaded memory)
         else:
-            answer = QueryUploadedDocs(query=query, user_id=user_id, section=section, export=False)
+            answer = QueryUploadedDocs.invoke({"query": query, "user_token": user_token, "section": section, "export": False})
 
         # Tier-based length control (example)
         if tier == "free" and len(answer) > 1000:
@@ -73,3 +75,4 @@ if query:
 
     history.add_ai_message(answer)
     st.chat_message("assistant").markdown(answer)
+
