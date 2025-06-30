@@ -117,6 +117,15 @@ def update_password(email: str, new_password: str) -> bool:
             return True
     return False
 
+def reset_password(email: str, new_password: str) -> bool:
+    users = load_user_data()
+    for token, u in users.items():
+        if u.get("email") == email:
+            u["password"] = new_password
+            save_user_data(users)
+            return True
+    return False
+
 # === CLI Example ===
 if __name__ == "__main__":
     t = create_user("Victor", "victor@gmail.com", password="pass123", tier="pro", security_q="Best team?", security_a="Arsenal")
