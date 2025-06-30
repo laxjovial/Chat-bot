@@ -1,5 +1,35 @@
+# data/smtp_config.yml
+# SMTP Configuration for Email Services
+
+# Gmail Configuration (most common)
 smtp_server: smtp.gmail.com
 smtp_port: 587
-smtp_user: your_email@gmail.com
-smtp_password: your_app_password
-from_email: your_email@gmail.com
+smtp_user: your-email@gmail.com
+smtp_password: your-app-password  # Use App Password, not regular password
+from_email: no-reply@yourapp.com
+
+# Alternative configurations:
+
+# Outlook/Hotmail
+# smtp_server: smtp-mail.outlook.com
+# smtp_port: 587
+# smtp_user: your-email@outlook.com
+# smtp_password: your-password
+
+# Yahoo Mail
+# smtp_server: smtp.mail.yahoo.com
+# smtp_port: 587
+# smtp_user: your-email@yahoo.com
+# smtp_password: your-app-password
+
+# Custom SMTP Server
+# smtp_server: mail.yourserver.com
+# smtp_port: 587
+# smtp_user: your-email@yourserver.com
+# smtp_password: your-password
+
+# Notes:
+# 1. For Gmail, you need to enable "2-Step Verification" and create an "App Password"
+# 2. Never commit real credentials to version control
+# 3. Consider using environment variables for production
+# 4. The from_email can be different from smtp_user for branding purposes
