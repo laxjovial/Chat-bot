@@ -121,10 +121,11 @@ def reset_password(email: str, new_password: str) -> bool:
     users = load_user_data()
     for token, u in users.items():
         if u.get("email") == email:
-            u["password"] = new_password
+            u["password_hash"] = hash_password(new_password)
             save_user_data(users)
             return True
     return False
+
 
 # === CLI Example ===
 if __name__ == "__main__":
