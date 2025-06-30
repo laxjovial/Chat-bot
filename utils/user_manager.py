@@ -3,6 +3,7 @@
 import uuid
 import json
 import os
+import hashlib
 from datetime import datetime
 from pathlib import Path
 
@@ -10,8 +11,19 @@ from pathlib import Path
 USER_DATA_FILE = Path("data/users.json")
 USER_DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-# === Core Functions ===
+# === Utility: Password Hashing ===
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
 
+def verify_password(email: str, password: str) -> bool:
+    users = load_user_data()
+    for user in users.values():
+        if user.get("email") == email:
+            stored_hash = user.get("password_hash", "")
+            return hash_password(password) == stored_hash
+    return False
+
+# === Core Functions ===
 def generate_token(prefix="usr"):
     """Generates a unique internal user token."""
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
@@ -26,7 +38,7 @@ def save_user_data(data):
     with open(USER_DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-def create_user(username: str, email: str, tier="free", password="", security_q="", security_a="") -> str:
+def create_user(username: str, email: str, password: str = "", tier="free", security_q="", security_a="") -> str:
     """
     Creates a new user with a unique token.
     Returns the user token.
@@ -43,10 +55,10 @@ def create_user(username: str, email: str, tier="free", password="", security_q=
         "username": username,
         "email": email,
         "tier": tier,
-        "password": password,  # NOTE: can hash later for security
         "created_at": datetime.utcnow().isoformat(),
         "security_q": security_q,
-        "security_a": security_a
+        "security_a": security_a,
+        "password_hash": hash_password(password) if password else ""
     }
     save_user_data(users)
     return token
@@ -71,36 +83,44 @@ def find_user_by_email(email: str) -> dict:
             return {"token": token, **u}
     return {}
 
-def verify_password(email: str, input_password: str) -> bool:
-    """
-    Compares input password with stored password for the given email.
-    """
-    user = find_user_by_email(email)
-    return user and user.get("password") == input_password
-
 def verify_recovery(email: str, question: str, answer: str) -> bool:
     u = find_user_by_email(email)
     return u and u.get("security_q") == question and u.get("security_a") == answer
 
-def send_token_to_email(email: str, token: str = None):
+def send_token_to_email(email: str):
     """
-    (Mock) Sends token or OTP to email. Replace with SMTP for production.
+    (Mock) Sends token to email. Replace this with SMTP integration.
     """
-    if not token:
-        user = find_user_by_email(email)
-        if user:
-            token = user["token"]
-    if token:
-        print(f"📬 Sending token or OTP '{token}' to {email}")
+    u = find_user_by_email(email)
+    if u:
+        print(f"Sending user token {u['token']} to {email}")
         return True
+    return False
+
+def reset_user_token(email: str) -> str:
+    users = load_user_data()
+    for token, u in list(users.items()):
+        if u.get("email") == email:
+            new_token = generate_token()
+            users[new_token] = u
+            del users[token]
+            save_user_data(users)
+            return new_token
+    return ""
+
+def update_password(email: str, new_password: str) -> bool:
+    users = load_user_data()
+    for token, u in users.items():
+        if u.get("email") == email:
+            u["password_hash"] = hash_password(new_password)
+            save_user_data(users)
+            return True
     return False
 
 # === CLI Example ===
 if __name__ == "__main__":
-    t = create_user(
-        "Victor", "victor@gmail.com", tier="pro", password="arsenal123",
-        security_q="Best team?", security_a="Arsenal"
-    )
+    t = create_user("Victor", "victor@gmail.com", password="pass123", tier="pro", security_q="Best team?", security_a="Arsenal")
     print(f"Created user token: {t}")
     print("Resolved:", lookup_user_by_token(t))
+
 
