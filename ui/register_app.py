@@ -2,7 +2,7 @@
 
 import streamlit as st
 from utils.user_manager import create_user, find_user_by_email
-from utils.email_utils import send_email
+from utils.email_utils import EmailSender # Import the EmailSender class
 
 st.set_page_config(page_title="📝 Register", layout="centered")
 st.title("📝 Create an Account")
@@ -34,23 +34,31 @@ if st.button("Create Account"):
             security_a=security_a
         )
 
-        # === Email the token ===
-        subject = "✅ Your Smart Assistant Login Token"
-        body = f"""
-        Hello {username},
+        if token: # Ensure user creation was successful and a token was returned
+            # === Email the token ===
+            subject = "✅ Your Smart Assistant Login Token"
+            body = f"""
+            Hello {username},
 
-        Your account has been successfully created!
+            Your account has been successfully created!
 
-        🔑 Your unique token: {token}
+            🔑 Your unique token: {token}
 
-        This token gives you secure access. Please keep it safe and do not share it with others.
+            This token gives you secure access. Please keep it safe and do not share it with others.
 
-        You can also log in using your username/password or OTP via email or phone (if enabled).
+            You can also log in using your username/password or OTP via email or phone (if enabled).
 
-        — Smart AI Assistant Team
-        """
+            — Smart AI Assistant Team
+            """
+            
+            sender = EmailSender() # Instantiate EmailSender
+            success_email, msg_email = sender.send_email(to_email=email, subject=subject, body=body)
 
-        send_email(email=email, subject=subject, body=body)
-
-        st.success("🎉 Account created!")
-        st.info("📧 Token sent to your email. Check your inbox.")
+            if success_email:
+                st.success("🎉 Account created!")
+                st.info("📧 Token sent to your email. Check your inbox.")
+            else:
+                st.error(f"❌ Account created, but failed to send token email: {msg_email}. Please note down your token: `{token}`")
+                st.warning("Please save your token securely as you will need it to log in.")
+        else:
+            st.error("❌ Account creation failed. Please try again.")
