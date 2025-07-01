@@ -30,17 +30,15 @@ apis:
   #   key_value: "Bearer load_from_secrets.nbadata_api_key"
   #   headers: {}
   #   default_params: {}
-  #   query_param: "player_name"
+  #   query_param: "player"
 
-search_apis:
+search_apis: # These can be shared search APIs, or sports-specific ones
   - name: "SerpAPI"
     type: "search"
     endpoint: "https://serpapi.com/search"
     key_name: "api_key"
-    key_value: "load_from_secrets.serpapi_api_key"
-    query_param: "q"
+    key_value: "load_from_secrets.serpapi_api_key" # Key will be loaded from .streamlit/secrets.toml
+    headers: {}
     default_params:
       engine: "google"
-      num: 5 # Number of results
-
-  # Add other search APIs if needed
+    query_param: "q" # General search query parameter
