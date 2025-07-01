@@ -1,9 +1,46 @@
 # data/sports_apis.yaml
-sports_api:
-  football_data:
-    base_url: "https://api.football-data.org/v4/"
-    # api_key: "load_from_secrets.football_data_api_key" # Placeholder, actual key in secrets.toml
-  nba_data:
-    base_url: "https://api.example.nba.com/"
-    # api_key: "load_from_secrets.nba_data_api_key" # Placeholder, actual key in secrets.toml
-  # Add other sports APIs here
+# Configuration for various sports APIs
+
+apis:
+  - name: "TheSportsDB"
+    type: "sports"
+    endpoint: "https://www.thesportsdb.com/api/v1/json/3/" # Use 3 for a higher free tier
+    key_name: "api_key"
+    key_value: "load_from_secrets.thesportsdb_api_key" # Key will be loaded from .streamlit/secrets.toml
+    headers: {}
+    default_params: {}
+    query_param: "s" # Example: /searchteams.php?s=Arsenal
+
+  - name: "API-Football"
+    type: "sports"
+    endpoint: "https://v3.football.api-sports.io/"
+    key_name: "x-rapidapi-key"
+    key_value: "load_from_secrets.api_football_api_key" # Key will be loaded from .streamlit/secrets.toml
+    headers:
+      x-rapidapi-host: "v3.football.api-sports.io"
+    default_params: {}
+    query_param: "search" # Example: /teams?search=Manchester United
+
+  # Add more sports APIs here (e.g., NBA, F1, Cricket)
+  # Example for a hypothetical NBA API
+  # - name: "NBADataAPI"
+  #   type: "sports"
+  #   endpoint: "https://api.nbadata.com/v1/"
+  #   key_name: "Authorization"
+  #   key_value: "Bearer load_from_secrets.nbadata_api_key"
+  #   headers: {}
+  #   default_params: {}
+  #   query_param: "player_name"
+
+search_apis:
+  - name: "SerpAPI"
+    type: "search"
+    endpoint: "https://serpapi.com/search"
+    key_name: "api_key"
+    key_value: "load_from_secrets.serpapi_api_key"
+    query_param: "q"
+    default_params:
+      engine: "google"
+      num: 5 # Number of results
+
+  # Add other search APIs if needed
