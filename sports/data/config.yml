@@ -1,6 +1,6 @@
 # data/config.yml
 app:
-  name: "Sports Intel Agent"
+  name: "Unified AI Agent"
   version: "1.0.0"
   environment: "development"
 
