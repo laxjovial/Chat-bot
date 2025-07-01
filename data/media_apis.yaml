@@ -1,0 +1,56 @@
+# data/media_apis.yaml
+# Configuration for various media APIs
+
+apis:
+  - name: "TheMovieDB"
+    type: "media"
+    endpoint: "https://api.themoviedb.org/3/"
+    key_name: "api_key"
+    key_value: "load_from_secrets.themoviedb_api_key" # Key will be loaded from .streamlit/secrets.toml
+    headers: {}
+    default_params: {}
+    query_param: "query" # Example: /search/movie?query=Inception
+
+  - name: "OMDbAPI"
+    type: "media"
+    endpoint: "http://www.omdbapi.com/"
+    key_name: "apikey"
+    key_value: "load_from_secrets.omdbapi_api_key" # Key will be loaded from .streamlit/secrets.toml
+    headers: {}
+    default_params: {}
+    query_param: "s" # Example: ?s=Matrix
+
+  - name: "AniList" # For Anime
+    type: "media"
+    endpoint: "https://graphql.anilist.co/" # AniList uses GraphQL, not REST
+    key_name: "" # No direct API key in headers, might use Bearer token if authenticated
+    key_value: ""
+    headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+    default_params: {} # GraphQL queries are in the body, not params
+    query_param: "query" # This will be used to indicate a GraphQL query
+
+  # Add more media APIs here (e.g., Spotify, YouTube Data API, Podcast APIs)
+  # Example for a hypothetical Music API
+  # - name: "MusicBrainz"
+  #   type: "media"
+  #   endpoint: "https://musicbrainz.org/ws/2/"
+  #   key_name: "" # No API key needed for basic lookups
+  #   key_value: ""
+  #   headers:
+  #     User-Agent: "YourAppName/1.0 ( your_email@example.com )"
+  #   default_params:
+  #     fmt: "json"
+  #   query_param: "query"
+
+search_apis: # These can be shared search APIs, or media-specific ones
+  - name: "GoogleCustomSearch"
+    type: "search"
+    endpoint: "https://www.googleapis.com/customsearch/v1"
+    key_name: "key"
+    key_value: "load_from_secrets.google_custom_search_api_key"
+    query_param: "q"
+    default_params:
+      cx: "YOUR_CUSTOM_SEARCH_ENGINE_ID" # Replace with your CX ID
+      num: 5
