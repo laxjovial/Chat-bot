@@ -1,118 +1,115 @@
-# sports/config/config_manager.py
-
+# config/config_manager.py
 import os
 import yaml
-from pathlib import Path
-from utils.user_manager import lookup_user_by_token
+import streamlit as st
+import logging
 
-# === Default paths ===
-CONFIG_FILE = Path("sports/data/config.yml")
-USER_CONFIG_DIR = Path("sports/data/users")
+logger = logging.getLogger(__name__)
 
-# === Defaults ===
-DEFAULT_CONFIG = {
-    "llm_model": "llama3",
-    "temperature": 0.3,
-    "embedding_mode": "openai",
-    "embedding_model": "text-embedding-ada-002",
-    "tier": "free",
-    "api_keys": {
-        "openai": "",
-        "serpapi": "",
-        "contextualweb": "",
-        "huggingface": ""
-    }
-}
+class ConfigManager:
+    _instance = None
+    _config_data = {}
+    _is_loaded = False
 
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(ConfigManager, cls).__new__(cls)
+        return cls._instance
 
-def load_global_config():
-    if CONFIG_FILE.exists():
-        with open(CONFIG_FILE, "r") as f:
-            return yaml.safe_load(f)
-    return DEFAULT_CONFIG
+    def __init__(self):
+        if not self._is_loaded:
+            self._load_config()
+            self._is_loaded = True
 
+    def _load_config(self):
+        """
+        Loads configurations from YAML files and Streamlit secrets.
+        Prioritizes Streamlit secrets for sensitive information.
+        """
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        data_dir = os.path.join(os.path.dirname(base_dir), 'data')
 
-def load_user_config(user_token: str) -> dict:
-    user_file = USER_CONFIG_DIR / f"{user_token}.yml"
-    if user_file.exists():
-        with open(user_file, "r") as f:
-            return yaml.safe_load(f)
-    return {}
-
-
-def get_config(user_token: str = "default") -> dict:
-    """Returns merged global + user config. Auto-creates user config if missing."""
-    user_file = USER_CONFIG_DIR / f"{user_token}.yml"
-    if not user_file.exists():
-        create_user_config(user_token)  # 🔁 Auto-create user config on first use
-
-    config = load_global_config()
-    user_config = load_user_config(user_token)
-
-    for key, val in user_config.items():
-        if isinstance(val, dict) and key in config:
-            config[key].update(val)
+        # Load general config.yml
+        config_path = os.path.join(data_dir, 'config.yml')
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                self._config_data.update(yaml.safe_load(f) or {})
+            logger.info(f"Loaded config from {config_path}")
         else:
-            config[key] = val
+            logger.warning(f"config.yml not found at {config_path}")
 
-    return config
+        # Load sports_apis.yaml
+        sports_apis_path = os.path.join(data_dir, 'sports_apis.yaml')
+        if os.path.exists(sports_apis_path):
+            with open(sports_apis_path, 'r') as f:
+                self._config_data.update(yaml.safe_load(f) or {})
+            logger.info(f"Loaded sports APIs config from {sports_apis_path}")
+        else:
+            logger.warning(f"sports_apis.yaml not found at {sports_apis_path}")
 
+        # Override with Streamlit secrets (for sensitive keys like LLM API keys)
+        # Secrets are accessed via st.secrets.section.key
+        if hasattr(st, 'secrets'):
+            for key, value in st.secrets.items():
+                if isinstance(value, dict):
+                    # Merge nested dictionaries from secrets
+                    if key not in self._config_data:
+                        self._config_data[key] = {}
+                    self._config_data[key].update(value)
+                else:
+                    self._config_data[key] = value
+            logger.info("Loaded/overrode config with Streamlit secrets.")
+        else:
+            logger.warning("Streamlit secrets not available. Ensure app is run via 'streamlit run'.")
 
-def get_api_key(service: str, user_token: str = "default") -> str:
-    config = get_config(user_token)
-    return config.get("api_keys", {}).get(service, "")
+    def get(self, key, default=None):
+        """Retrieves a configuration value."""
+        # Support nested access like 'section.key'
+        keys = key.split('.')
+        value = self._config_data
+        for k in keys:
+            if isinstance(value, dict) and k in value:
+                value = value[k]
+            else:
+                return default
+        return value
 
+    def __getitem__(self, key):
+        """Allows dictionary-like access: config['section']['key'] or config['top_level_key']"""
+        return self.get(key)
 
-def get_model_settings(user_token: str = "default") -> dict:
-    config = get_config(user_token)
-    return {
-        "llm_model": config.get("llm_model", "llama3"),
-        "temperature": config.get("temperature", 0.3),
-    }
+# Global instance to be imported by other modules
+config_manager = ConfigManager()
 
+if __name__ == '__main__':
+    # Example usage for testing (this block won't run directly in Streamlit context without modifications)
+    # To test, run: python -m your_project.config.config_manager
+    # You might need to mock st.secrets for local execution without Streamlit
+    print("Testing ConfigManager (requires streamlit.secrets context for full test):")
 
-def get_embedding_config(user_token: str = "default") -> dict:
-    config = get_config(user_token)
-    return {
-        "mode": config.get("embedding_mode", "openai"),
-        "model": config.get("embedding_model", "text-embedding-ada-002"),
-    }
+    # Example of how to use it in a Streamlit app or test file
+    # with a mock for st.secrets if running standalone:
 
+    # Mock st.secrets for standalone testing if needed
+    class MockSecrets:
+        def __init__(self):
+            self.openai = {"api_key": "sk-mock-openai-key"}
+            self.app = {"name": "Test App"}
 
-def get_user_tier(user_token: str = "default") -> str:
-    return get_config(user_token).get("tier", "free")
+    # Temporarily mock st.secrets if not running in a Streamlit context
+    if not hasattr(st, 'secrets'):
+        st.secrets = MockSecrets()
+        print("Mocked st.secrets for standalone testing.")
 
+    cm = ConfigManager()
 
-def create_user_config(user_token: str, config: dict = None) -> bool:
-    user_file = USER_CONFIG_DIR / f"{user_token}.yml"
-    if not user_file.exists():
-        user_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(user_file, "w") as f:
-            yaml.dump(config or DEFAULT_CONFIG, f)
-        return True
-    return False
+    print(f"App Name: {cm.get('app.name', 'Default App')}")
+    print(f"LLM Provider: {cm.get('llm.provider', 'OpenAI')}")
+    print(f"OpenAI API Key (should be from secrets): {cm.get('openai.api_key', 'Not Set')}")
+    print(f"Sports API URL: {cm.get('sports_api.base_url', 'Not Set')}")
 
-
-def set_api_key(service: str, key_value: str, user_token: str = "default") -> None:
-    user_file = USER_CONFIG_DIR / f"{user_token}.yml"
-    config = load_user_config(user_token)
-    if "api_keys" not in config:
-        config["api_keys"] = {}
-    config["api_keys"][service] = key_value
-    user_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(user_file, "w") as f:
-        yaml.dump(config, f)
-
-
-# CLI example test
-if __name__ == "__main__":
-    from utils.user_manager import create_user
-    token = create_user("Victor", "victor@gmail.com")
-    print(get_model_settings(token))
-    print(get_api_key("openai", token))
-    print(get_embedding_config(token))
-    print(get_user_tier(token))
-    create_user_config(token)
-    set_api_key("openai", "new-key-123", token)
-
-
+    # Test dictionary-like access
+    if 'app' in cm:
+        print(f"App section config: {cm['app']}")
+    if 'openai' in cm and 'api_key' in cm['openai']:
+        print(f"OpenAI API Key (dict access): {cm['openai']['api_key']}")
