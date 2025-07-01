@@ -7,302 +7,141 @@ from typing import Optional, Dict, Any
 import streamlit as st
 from datetime import datetime
 
+# Import the centralized ConfigManager
+from config.config_manager import config_manager
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
 # === Configuration ===
 class EmailConfig:
-    """Email configuration class for Streamlit apps"""
+    """
+    Email configuration class.
+    Now primarily loads settings via ConfigManager, falling back to env vars.
+    """
     
     @staticmethod
     def get_smtp_config() -> Dict[str, Any]:
         """
-        Get SMTP configuration from Streamlit secrets or environment variables.
-        For Render deployment, use environment variables.
+        Get SMTP configuration from ConfigManager (which pulls from config.yml or secrets).
+        Falls back to environment variables for Render deployment if not in config.
         """
-        try:
-            # Try Streamlit secrets first (for local development)
-            if hasattr(st, 'secrets') and 'email' in st.secrets:
-                return {
-                    'smtp_server': st.secrets.email.smtp_server,
-                    'smtp_port': int(st.secrets.email.smtp_port),
-                    'smtp_user': st.secrets.email.smtp_user,
-                    'smtp_password': st.secrets.email.smtp_password,
-                    'from_email': st.secrets.email.from_email,
-                    'from_name': st.secrets.email.get('from_name', 'Your App')
-                }
-        except Exception as e:
-            logger.warning(f"Could not load from Streamlit secrets: {e}")
+        smtp_config = {}
         
-        # Fallback to environment variables (for Render deployment)
-        return {
-            'smtp_server': os.getenv('SMTP_SERVER', 'smtp.gmail.com'),
-            'smtp_port': int(os.getenv('SMTP_PORT', 587)),
-            'smtp_user': os.getenv('SMTP_USER', ''),
-            'smtp_password': os.getenv('SMTP_PASSWORD', ''),
-            'from_email': os.getenv('FROM_EMAIL', 'no-reply@yourapp.com'),
-            'from_name': os.getenv('FROM_NAME', 'Your App')
-        }
-    
+        # Try to load from centralized config_manager first
+        smtp_config['smtp_server'] = config_manager.get('email.smtp_server', os.getenv('SMTP_SERVER', 'smtp.gmail.com'))
+        smtp_config['smtp_port'] = int(config_manager.get('email.smtp_port', os.getenv('SMTP_PORT', 587)))
+        smtp_config['smtp_user'] = config_manager.get_secret('email_smtp_user', os.getenv('SMTP_USER'))
+        smtp_config['smtp_password'] = config_manager.get_secret('email_smtp_password', os.getenv('SMTP_PASSWORD'))
+        smtp_config['from_email'] = config_manager.get('email.from_email', os.getenv('FROM_EMAIL'))
+        smtp_config['from_name'] = config_manager.get('email.from_name', os.getenv('FROM_NAME', 'Your Unified AI Agent'))
+
+        # Check if essential configs are available
+        if not all([smtp_config['smtp_server'], smtp_config['smtp_user'], smtp_config['smtp_password'], smtp_config['from_email']]):
+            logger.warning("SMTP configuration incomplete via config_manager or environment variables.")
+            return {}
+            
+        return smtp_config
+
     @staticmethod
     def is_configured() -> bool:
-        """Check if email is properly configured"""
+        """Check if essential SMTP configuration details are available."""
         config = EmailConfig.get_smtp_config()
-        required_fields = ['smtp_server', 'smtp_user', 'smtp_password', 'from_email']
-        return all(config.get(field) for field in required_fields)
+        return all([
+            config.get('smtp_server'), 
+            config.get('smtp_user'), 
+            config.get('smtp_password'), 
+            config.get('from_email')
+        ])
 
-# === Email Templates ===
-class EmailTemplates:
-    """Email template collection"""
-    
-    OTP_TEMPLATE = """
-Hello,
-
-Your One-Time Password (OTP) for login is:
-
-{otp}
-
-This OTP will expire in {expiry_minutes} minutes.
-
-If you did not request this OTP, please ignore this email.
-
-Best regards,
-{app_name}
-"""
-
-    TOKEN_DELIVERY_TEMPLATE = """
-Hello {username},
-
-Your account has been successfully created!
-
-🔑 Your unique token: {token}
-
-This token gives you secure access. Please keep it safe and do not share it with others.
-You can also log in using your username/password or OTP via email.
-
-Best regards,
-{app_name} Team
-"""
-
-    PASSWORD_RESET_TEMPLATE = """
-Hello,
-
-You have requested to reset your password. Please use the following verification code:
-
-{reset_code}
-
-This code will expire in {expiry_minutes} minutes.
-
-If you did not request this password reset, please ignore this email.
-
-Best regards,
-{app_name}
-"""
-
-    PASSWORD_RESET_SUCCESS_TEMPLATE = """
-Hello,
-
-Your password has been successfully reset at {timestamp}.
-
-If you did not make this change, please contact support immediately.
-
-Best regards,
-{app_name}
-"""
-
-    WELCOME_TEMPLATE = """
-Hello {username},
-
-Welcome to {app_name}! Your account has been successfully created.
-
-Email: {email}
-Registration Date: {registration_date}
-🔑 Your unique token: {token}
-
-This token gives you secure access. Please keep it safe and do not share it with others.
-You can also log in using your username/password or OTP via email.
-
-Thank you for joining us!
-
-Best regards,
-{app_name} Team
-"""
-
-    SECURITY_ALERT_TEMPLATE = """
-Hello,
-
-We detected the following security activity on your account:
-
-Action: {action}
-Time: {timestamp}
-Location: {location}
-
-If this was not you, please contact support immediately and change your password.
-
-Best regards,
-{app_name} Security Team
-"""
-
-# === Core Email Functions ===
+# === Email Sending Class ===
 class EmailSender:
-    """Main email sending class"""
-    
     def __init__(self):
-        self.config = EmailConfig.get_smtp_config()
-        self.app_name = os.getenv('APP_NAME', 'Your Application')
-    
-    def send_email(self, to_email: str, subject: str, body: str, 
-                   html_body: Optional[str] = None) -> tuple[bool, str]:
-        """
-        Send email using SMTP configuration
+        self.smtp_config = EmailConfig.get_smtp_config()
+        if not self.smtp_config:
+            logger.error("EmailSender initialized without full SMTP configuration.")
         
-        Args:
-            to_email: Recipient email address
-            subject: Email subject
-            body: Plain text body
-            html_body: HTML body (optional)
-        
-        Returns:
-            tuple[bool, str]: (success, message)
-        """
-        # Check if email is configured
-        if not EmailConfig.is_configured():
-            # For development/testing - log email instead of sending
-            logger.info(f"[MOCK EMAIL] To: {to_email}, Subject: {subject}")
-            logger.info(f"Body: {body}")
-            if os.getenv('ENVIRONMENT') != 'production':
-                return True, "Email sent (mock mode)"
-            else:
-                return False, "Email configuration missing"
-        
+    def _send(self, msg: EmailMessage) -> Tuple[bool, str]:
+        """Helper to send the email message."""
+        if not self.smtp_config:
+            return False, "SMTP configuration missing or incomplete."
+
         try:
-            # Create message
-            msg = EmailMessage()
-            msg["Subject"] = subject
-            msg["From"] = f"{self.config['from_name']} <{self.config['from_email']}>"
-            msg["To"] = to_email
-            msg["Reply-To"] = self.config['from_email']
-            
-            # Set content
-            msg.set_content(body)
-            if html_body:
-                msg.add_alternative(html_body, subtype='html')
-            
-            # Send email
-            with smtplib.SMTP(self.config['smtp_server'], self.config['smtp_port']) as server:
-                server.starttls()
-                server.login(self.config['smtp_user'], self.config['smtp_password'])
+            with smtplib.SMTP(self.smtp_config['smtp_server'], self.smtp_config['smtp_port']) as server:
+                server.starttls()  # Secure the connection
+                server.login(self.smtp_config['smtp_user'], self.smtp_config['smtp_password'])
                 server.send_message(msg)
-            
-            logger.info(f"Email sent successfully to {to_email}")
-            return True, "Email sent successfully"
-            
+            logger.info(f"Email sent successfully to {msg['To']}")
+            return True, "Email sent successfully."
         except smtplib.SMTPAuthenticationError:
-            error_msg = "SMTP authentication failed. Check email credentials."
-            logger.error(error_msg)
-            return False, error_msg
-            
-        except smtplib.SMTPRecipientsRefused:
-            error_msg = f"Invalid recipient email address: {to_email}"
-            logger.error(error_msg)
-            return False, error_msg
-            
+            logger.error(f"SMTP Authentication Error: Check username and password for {self.smtp_config.get('smtp_user')}")
+            return False, "Authentication failed. Check your email credentials."
+        except smtplib.SMTPException as e:
+            logger.error(f"SMTP Error: {e}")
+            return False, f"SMTP error occurred: {e}"
         except Exception as e:
-            error_msg = f"Failed to send email: {str(e)}"
-            logger.error(error_msg)
-            return False, error_msg
-    
-    def send_otp_email(self, to_email: str, otp: str, expiry_minutes: int = 5) -> tuple[bool, str]:
-        """Send OTP verification email"""
-        subject = f"Your {self.app_name} Verification Code"
-        body = EmailTemplates.OTP_TEMPLATE.format(
-            otp=otp,
-            expiry_minutes=expiry_minutes,
-            app_name=self.app_name
-        )
-        
-        return self.send_email(to_email, subject, body)
-    
-    def send_password_reset_email(self, to_email: str, reset_code: str, 
-                                expiry_minutes: int = 15) -> tuple[bool, str]:
-        """Send password reset email with verification code"""
-        subject = f"{self.app_name} - Password Reset Code"
-        body = EmailTemplates.PASSWORD_RESET_TEMPLATE.format(
-            reset_code=reset_code,
-            expiry_minutes=expiry_minutes,
-            app_name=self.app_name
-        )
-        
-        return self.send_email(to_email, subject, body)
-    
-    def send_password_reset_success_email(self, to_email: str) -> tuple[bool, str]:
-        """Send confirmation email after successful password reset"""
-        subject = f"{self.app_name} - Password Reset Successful"
-        body = EmailTemplates.PASSWORD_RESET_SUCCESS_TEMPLATE.format(
-            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
-            app_name=self.app_name
-        )
-        
-        return self.send_email(to_email, subject, body)
-    
-    def send_token_email(self, email: str, username: str, token: str) -> tuple[bool, str]:
-        """Send token delivery email (for registration)"""
-        subject = f"✅ Your {self.app_name} Login Token"
-        body = EmailTemplates.TOKEN_DELIVERY_TEMPLATE.format(
-            username=username,
-            token=token,
-            app_name=self.app_name
-        )
-        
-        return self.send_email(email, subject, body)
-    
-    def send_welcome_email(self, to_email: str, username: str, token: str = "") -> tuple[bool, str]:
-        """Send welcome email to new users with optional token"""
-        subject = f"Welcome to {self.app_name}!"
-        body = EmailTemplates.WELCOME_TEMPLATE.format(
-            username=username,
-            email=to_email,
-            app_name=self.app_name,
-            registration_date=datetime.now().strftime("%Y-%m-%d"),
-            token=token or "Not provided"
-        )
-        
-        return self.send_email(to_email, subject, body)
-    
-    def send_security_alert(self, to_email: str, action: str, 
-                          location: str = "Unknown") -> tuple[bool, str]:
-        """Send security alert email"""
-        subject = f"{self.app_name} - Security Alert"
-        body = EmailTemplates.SECURITY_ALERT_TEMPLATE.format(
-            action=action,
-            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
-            location=location,
-            app_name=self.app_name
-        )
-        
-        return self.send_email(to_email, subject, body)
+            logger.error(f"Failed to send email: {e}")
+            return False, f"An unexpected error occurred: {e}"
 
-# === Utility Functions ===
-def show_email_status(success: bool, message: str):
-    """Display email status in Streamlit UI"""
-    if success:
-        st.success(f"✅ {message}")
-    else:
-        st.error(f"❌ {message}")
-
-def check_email_config_ui():
-    """Show email configuration status in Streamlit sidebar"""
-    with st.sidebar:
-        st.subheader("📧 Email Configuration")
-        if EmailConfig.is_configured():
-            st.success("✅ Email configured")
+    def send_email(self, to_email: str, subject: str, body: str = "", html_body: Optional[str] = None) -> Tuple[bool, str]:
+        """
+        Send a generic email.
+        """
+        msg = EmailMessage()
+        msg['From'] = f"{self.smtp_config.get('from_name', 'Your App')} <{self.smtp_config.get('from_email')}>"
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        
+        if html_body:
+            msg.set_content(body) # Plain text fallback
+            msg.add_alternative(html_body, subtype='html')
         else:
-            st.warning("⚠️ Email not configured")
-            st.info("Set email environment variables for production deployment")
+            msg.set_content(body)
+            
+        return self._send(msg)
 
-# === Legacy Functions for Backward Compatibility ===
-def send_otp_to_email(email: str, otp: str) -> tuple[bool, str]:
-    """Legacy function name - redirects to send_otp_email"""
+    def send_otp_email(self, email: str, otp: str) -> Tuple[bool, str]:
+        """
+        Send an OTP (One-Time Password) email.
+        """
+        subject = "Your One-Time Password (OTP)"
+        body = f"Your OTP is: {otp}\n\nThis OTP is valid for a limited time. Do not share it with anyone."
+        html_body = f"""
+        <html>
+            <body>
+                <p>Hello,</p>
+                <p>Your One-Time Password (OTP) for verification is: <strong>{otp}</strong></p>
+                <p>This OTP is valid for a limited time. Please do not share this code with anyone.</p>
+                <p>If you did not request this, please ignore this email.</p>
+                <p>Best regards,<br>{self.smtp_config.get('from_name', 'Your Unified AI Agent')}</p>
+            </body>
+        </html>
+        """
+        return self.send_email(email, subject, body, html_body)
+
+    def send_password_reset_email(self, email: str, reset_link: str) -> Tuple[bool, str]:
+        """
+        Send a password reset email with a link.
+        """
+        subject = "Password Reset Request"
+        body = f"You have requested a password reset. Please click on the following link to reset your password: {reset_link}\n\nThis link is valid for a limited time."
+        html_body = f"""
+        <html>
+            <body>
+                <p>Hello,</p>
+                <p>You have requested a password reset for your account.</p>
+                <p>Please click on the link below to reset your password:</p>
+                <p><a href="{reset_link}">Reset Your Password</a></p>
+                <p>This link is valid for a limited time. If you did not request this, please ignore this email.</p>
+                <p>Best regards,<br>{self.smtp_config.get('from_name', 'Your Unified AI Agent')}</p>
+            </body>
+        </html>
+        """
+        return self.send_email(email, subject, body, html_body)
+
+# === Helper Functions (for backward compatibility or simpler access) ===
+def send_otp_email(email: str, otp: str) -> Tuple[bool, str]:
+    """Convenience function - redirects to EmailSender.send_otp_email"""
     sender = EmailSender()
     return sender.send_otp_email(email, otp)
 
@@ -314,14 +153,15 @@ def send_email_legacy(to_email: str = None, subject: str = "Notification",
     recipient_email = to_email or email
     
     if not recipient_email:
-        return False
+        return False, "Recipient email is missing." # Changed return type to match _send
     
     success, _ = sender.send_email(recipient_email, subject, body, html_body)
     return success
+
 def validate_email_format(email: str) -> bool:
-    """Basic email format validation"""
+    """Basic email format validation - kept for local use but prefer utils/validation_utils.py"""
     import re
-    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'
     return re.match(pattern, email) is not None
 
 def get_email_sender() -> EmailSender:
@@ -329,21 +169,101 @@ def get_email_sender() -> EmailSender:
     return EmailSender()
 
 # === For Testing ===
-def test_email_configuration():
-    """Test email configuration and sending"""
-    sender = EmailSender()
+if __name__ == "__main__":
+    import os
+    import sys
     
-    if not EmailConfig.is_configured():
-        return False, "Email not configured"
+    # Mock Streamlit secrets and config_manager for CLI testing
+    class MockSecrets:
+        def __init__(self):
+            # Replace with your actual test credentials if you want to send a real email
+            self.email = {
+                "smtp_server": "smtp.gmail.com",
+                "smtp_port": 587,
+                "smtp_user": os.environ.get("TEST_SMTP_USER", "your_test_email@gmail.com"), 
+                "smtp_password": os.environ.get("TEST_SMTP_PASSWORD", "your_app_password"), # Use an app password for Gmail
+                "from_email": os.environ.get("TEST_FROM_EMAIL", "your_test_email@gmail.com"),
+                "from_name": "Test Unified AI Agent"
+            }
+        # Add a way for config_manager to access secrets via `get_secret`
+        def get(self, key):
+            parts = key.split('.')
+            val = self
+            for part in parts:
+                if hasattr(val, part):
+                    val = getattr(val, part)
+                elif isinstance(val, dict) and part in val:
+                    val = val[part]
+                else:
+                    return None # Key not found
+            return val
+
+    class MockConfigManager:
+        def __init__(self, secrets_mock):
+            self._secrets = secrets_mock
+            self._config_data = {
+                'email': {
+                    'smtp_server': 'smtp.gmail.com',
+                    'smtp_port': 587,
+                    'from_email': 'your_test_email@gmail.com', # Should match test_smtp_user
+                    'from_name': 'CLI Test Agent'
+                }
+            }
+        def get(self, key, default=None):
+            parts = key.split('.')
+            val = self._config_data
+            for part in parts:
+                if isinstance(val, dict) and part in val:
+                    val = val[part]
+                else:
+                    return default
+            return val
+        
+        def get_secret(self, key, default=None):
+            # Simulate fetching from st.secrets directly for email credentials
+            return self._secrets.get(f"email.{key}") or default
+
+    if not hasattr(st, 'secrets'):
+        st.secrets = MockSecrets()
+        print("Mocked st.secrets for standalone testing.")
     
-    # Send test email to the configured sender email
-    config = EmailConfig.get_smtp_config()
-    test_email = config['from_email']
+    # Ensure config_manager is a fresh instance for this test run
+    # Override the global config_manager with a mock for testing
+    config_manager = MockConfigManager(st.secrets)
+    print("Mocked config_manager for CLI testing.")
+
+    print("Testing email_utils.py:")
     
-    success, message = sender.send_email(
-        test_email,
-        "Test Email Configuration",
-        "This is a test email to verify email configuration is working."
-    )
-    
-    return success, message
+    test_recipient_email = "recipient@example.com" # CHANGE THIS to a real email for actual testing
+    if config_manager.get_secret('email_smtp_user') == "your_test_email@gmail.com":
+        print("\n!!! WARNING: Using default test email credentials. Email sending will likely FAIL. !!!")
+        print("!!! Please set TEST_SMTP_USER, TEST_SMTP_PASSWORD, TEST_FROM_EMAIL environment variables or update MockSecrets !!!")
+        print(f"!!! Attempting to send to: {test_recipient_email} !!!")
+        proceed = input("Do you want to attempt sending a test email with current settings? (yes/no): ").lower()
+        if proceed != 'yes':
+            sys.exit("Test aborted.")
+        
+    print(f"\nSMTP Config: {EmailConfig.get_smtp_config()}")
+    print(f"Is configured: {EmailConfig.is_configured()}")
+
+    if EmailConfig.is_configured():
+        # Test generic email
+        success, msg = EmailSender().send_email(
+            test_recipient_email,
+            "Test Subject from Unified AI Agent CLI",
+            "This is a plain text test email from the Unified AI Agent utility script.",
+            "<h1>Hello from Unified AI Agent!</h1><p>This is an HTML test email from the <strong>Unified AI Agent</strong> utility script.</p>"
+        )
+        print(f"Generic email test result: Success={success}, Message={msg}")
+
+        # Test OTP email
+        test_otp = "123456"
+        success_otp, msg_otp = send_otp_email(test_recipient_email, test_otp)
+        print(f"OTP email test result: Success={success_otp}, Message={msg_otp}")
+
+        # Test password reset email
+        test_reset_link = "http://localhost:8501/reset_password?token=some_reset_token"
+        success_reset, msg_reset = EmailSender().send_password_reset_email(test_recipient_email, test_reset_link)
+        print(f"Password reset email test result: Success={success_reset}, Message={msg_reset}")
+    else:
+        print("Skipping email sending tests as configuration is incomplete.")
