@@ -49,8 +49,7 @@ search_apis: # These can be shared search APIs, or media-specific ones
     type: "search"
     endpoint: "https://www.googleapis.com/customsearch/v1"
     key_name: "key"
-    key_value: "load_from_secrets.google_custom_search_api_key"
-    query_param: "q"
-    default_params:
-      cx: "YOUR_CUSTOM_SEARCH_ENGINE_ID" # Replace with your CX ID
-      num: 5
+    key_value: "load_from_secrets.google_custom_search_api_key" # Key will be loaded from .streamlit/secrets.toml
+    headers: {}
+    default_params: {}
+    query_param: "q" # General search query parameter
