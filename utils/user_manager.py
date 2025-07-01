@@ -9,6 +9,9 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Tuple
 import streamlit as st
 
+# Import the comprehensive email validation from validation_utils
+from utils.validation_utils import validate_email_format, validate_password_strength as validate_password_strength_util
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -84,7 +87,7 @@ def verify_password(email: str, password: str) -> bool:
 
 def validate_password_strength(password: str) -> Tuple[bool, str]:
     """
-    Validate password strength.
+    Validate password strength using the comprehensive utility function.
     
     Args:
         password (str): Password to validate
@@ -92,19 +95,7 @@ def validate_password_strength(password: str) -> Tuple[bool, str]:
     Returns:
         Tuple[bool, str]: (is_valid, message)
     """
-    if len(password) < SecurityConfig.PASSWORD_MIN_LENGTH:
-        return False, f"Password must be at least {SecurityConfig.PASSWORD_MIN_LENGTH} characters"
-    
-    if not any(c.isupper() for c in password):
-        return False, "Password must contain at least one uppercase letter"
-    
-    if not any(c.islower() for c in password):
-        return False, "Password must contain at least one lowercase letter"
-    
-    if not any(c.isdigit() for c in password):
-        return False, "Password must contain at least one number"
-    
-    return True, "Password is strong"
+    return validate_password_strength_util(password, min_length=SecurityConfig.PASSWORD_MIN_LENGTH)
 
 # === Token Generation ===
 def generate_user_token(prefix: str = "usr") -> str:
@@ -130,26 +121,26 @@ def create_user(username: str, email: str, password: str = "", tier: str = "free
         Tuple[bool, str, str]: (success, message, user_token)
     """
     try:
-        # Validate email format
-        if not _is_valid_email(email):
+        # Validate email format using the imported comprehensive function
+        if not validate_email_format(email):
             return False, "Invalid email format", ""
-        
+            
         # Validate password if provided
         if password:
             is_valid, msg = validate_password_strength(password)
             if not is_valid:
                 return False, msg, ""
-        
+            
         with users_lock:
             # Check if email already exists
             existing_user = find_user_by_email(email)
             if existing_user:
                 return False, "Email already registered", existing_user.get("token", "")
-            
+                
             # Check if username already exists
             if find_user_by_username(username):
                 return False, "Username already taken", ""
-            
+                
             # Create new user
             token = generate_user_token()
             password_hash, salt = "", ""
@@ -375,7 +366,7 @@ def create_reset_token(email: str) -> Tuple[bool, str, str]:
         user = find_user_by_email(email)
         if not user:
             return False, "Email not found", ""
-        
+            
         with tokens_lock:
             reset_token = generate_reset_token()
             expiry_time = datetime.utcnow() + timedelta(minutes=SecurityConfig.RESET_TOKEN_EXPIRY_MINUTES)
@@ -439,12 +430,12 @@ def reset_password_with_token(token: str, new_password: str) -> Tuple[bool, str]
         is_valid, msg, email = validate_reset_token(token)
         if not is_valid:
             return False, msg
-        
+            
         # Validate new password
         is_valid, msg = validate_password_strength(new_password)
         if not is_valid:
             return False, msg
-        
+            
         with users_lock, tokens_lock:
             # Find user
             user = find_user_by_email(email)
@@ -471,11 +462,12 @@ def reset_password_with_token(token: str, new_password: str) -> Tuple[bool, str]
         return False, "Failed to reset password"
 
 # === Utility Functions ===
-def _is_valid_email(email: str) -> bool:
-    """Basic email validation."""
-    import re
-    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    return re.match(pattern, email) is not None
+# Removed the local _is_valid_email function as it's now imported from validation_utils
+# def _is_valid_email(email: str) -> bool:
+#     """Basic email validation."""
+#     import re
+#     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+#     return re.match(pattern, email) is not None
 
 def cleanup_expired_tokens() -> int:
     """
