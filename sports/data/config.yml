@@ -1,19 +1,21 @@
-# sports/data/config.yml
+# data/config.yml
+app:
+  name: "Sports Intel Agent"
+  version: "1.0.0"
+  environment: "development"
 
-# === Default LLM Configuration ===
-llm_model: llama3                           # Default model for LLM responses (local or cloud)
-temperature: 0.3                            # Default creativity level (0 = deterministic)
+llm:
+  provider: "openai" # or "ollama", "google", etc.
+  model: "gpt-4o" # or "llama3", "gemini-pro"
+  temperature: 0.7
+  max_tokens: 1500
 
-# === Embedding Configuration ===
-embedding_mode: openai                      # Supported: openai, huggingface
-embedding_model: text-embedding-ada-002     # OpenAI or HF model name
+rag:
+  top_k_results: 5
+  min_relevance_score: 0.7
 
-# === Default Access Tier ===
-tier: free                                  # Tier used when no specific user config exists
+web_scraping:
+  user_agent: "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+  timeout_seconds: 10
 
-# === Global Fallback API Keys (used if not overridden in user config) ===
-api_keys:
-  openai: YOUR_GLOBAL_OPENAI_KEY
-  serpapi: YOUR_GLOBAL_SERPAPI_KEY
-  contextualweb: YOUR_GLOBAL_CONTEXTUALWEB_KEY
-  huggingface: YOUR_GLOBAL_HF_TOKEN
+# Add other general configurations as needed
