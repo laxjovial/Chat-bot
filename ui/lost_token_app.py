@@ -1,47 +1,53 @@
 # ui/lost_token_app.py
 
 import streamlit as st
-from utils.user_manager import (
-    find_user_by_email,
-    verify_recovery,
-    reset_user_token
+from utils.user_manager import find_user_by_email, create_otp, verify_otp, get_user_token
+from utils.email_utils import EmailSender # Import the EmailSender class
+
+# === Page Configuration ===
+st.set_page_config(
+    page_title="❓ Lost Token",
+    layout="centered",
+    initial_sidebar_state="collapsed"
 )
-from utils.email_utils import EmailSender
 
-st.set_page_config(page_title="🔑 Lost Token Recovery", layout="centered")
-st.title("🔐 Recover Your User Token")
+# === Initialize Session State ===
+if "lost_token_email_sent" not in st.session_state:
+    st.session_state.lost_token_email_sent = False
+if "lost_token_email_address" not in st.session_state:
+    st.session_state.lost_token_email_address = ""
 
-# === Step 1: Ask for email ===
-email = st.text_input("Enter your registered email")
+# === Main App Header ===
+st.title("❓ Lost Your Access Token?")
+st.markdown("---")
 
-if email:
-    user = find_user_by_email(email)
+st.info("Enter your registered email address below. We'll send your unique access token to your inbox.")
 
-    if not user:
-        st.error("❌ No account found with this email.")
+email = st.text_input("📧 Email Address", placeholder="Enter your registered email")
+
+if st.button("🚀 Recover Access Token", type="primary", use_container_width=True):
+    if not email:
+        st.error("❌ Please enter your email address.")
     else:
-        st.success("✅ Email found. Let's verify your identity.")
-
-        # === Step 2: Security Question ===
-        question = user.get("security_q", "No security question set.")
-        st.markdown(f"**🔒 Security Question:** {question}")
-        answer = st.text_input("Your Answer")
-
-        if answer:
-            if verify_recovery(email, question, answer):
-                st.success("🎯 Identity verified!")
-
-                # === Step 3: Reset Token ===
-                if st.button("🔁 Generate New Token"):
-                    new_token = reset_user_token(email)
-                    if new_token:
-                        sender = EmailSender()
-                        success, msg = sender.send_token_email(email=email, username=user.get("username"), token=new_token)
-                        if success:
-                            st.success("✅ A new token has been sent to your email.")
-                        else:
-                            st.warning("⚠️ Token generated but email delivery failed.")
-                    else:
-                        st.error("❌ Could not generate a new token.")
+        user = find_user_by_email(email)
+        if user:
+            # Get the existing token
+            user_token = get_user_token(email)
+            if user_token:
+                # Send the token via email
+                sender = EmailSender() # Instantiate EmailSender
+                success, message = sender.send_access_token_email(email, user_token)
+                if success:
+                    st.success("✅ Your access token has been sent to your email address!")
+                    st.session_state.lost_token_email_sent = True
+                    st.session_state.lost_token_email_address = email
+                else:
+                    st.error(f"❌ Failed to send access token email: {message}. Please try again.")
             else:
-                st.error("❌ Incorrect answer to the security question.")
+                st.error("❌ Could not retrieve an access token for this email. Please ensure you have registered.")
+        else:
+            st.error("❌ No account found with that email address.")
+
+st.markdown("---")
+if st.session_state.lost_token_email_sent:
+    st.info(f"If you don't receive the email within a few minutes, please check your spam folder or re-enter your email to try again.")
