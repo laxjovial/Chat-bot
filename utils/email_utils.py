@@ -58,14 +58,30 @@ class EmailTemplates:
     OTP_TEMPLATE = """
 Hello,
 
-Your verification code is: {otp}
+Your One-Time Password (OTP) for login is:
 
-This code will expire in {expiry_minutes} minutes.
+{otp}
 
-If you did not request this code, please ignore this email.
+This OTP will expire in {expiry_minutes} minutes.
+
+If you did not request this OTP, please ignore this email.
 
 Best regards,
 {app_name}
+"""
+
+    TOKEN_DELIVERY_TEMPLATE = """
+Hello {username},
+
+Your account has been successfully created!
+
+🔑 Your unique token: {token}
+
+This token gives you secure access. Please keep it safe and do not share it with others.
+You can also log in using your username/password or OTP via email.
+
+Best regards,
+{app_name} Team
 """
 
     PASSWORD_RESET_TEMPLATE = """
@@ -101,6 +117,10 @@ Welcome to {app_name}! Your account has been successfully created.
 
 Email: {email}
 Registration Date: {registration_date}
+🔑 Your unique token: {token}
+
+This token gives you secure access. Please keep it safe and do not share it with others.
+You can also log in using your username/password or OTP via email.
 
 Thank you for joining us!
 
@@ -225,14 +245,26 @@ class EmailSender:
         
         return self.send_email(to_email, subject, body)
     
-    def send_welcome_email(self, to_email: str, username: str) -> tuple[bool, str]:
-        """Send welcome email to new users"""
+    def send_token_email(self, email: str, username: str, token: str) -> tuple[bool, str]:
+        """Send token delivery email (for registration)"""
+        subject = f"✅ Your {self.app_name} Login Token"
+        body = EmailTemplates.TOKEN_DELIVERY_TEMPLATE.format(
+            username=username,
+            token=token,
+            app_name=self.app_name
+        )
+        
+        return self.send_email(email, subject, body)
+    
+    def send_welcome_email(self, to_email: str, username: str, token: str = "") -> tuple[bool, str]:
+        """Send welcome email to new users with optional token"""
         subject = f"Welcome to {self.app_name}!"
         body = EmailTemplates.WELCOME_TEMPLATE.format(
             username=username,
             email=to_email,
             app_name=self.app_name,
-            registration_date=datetime.now().strftime("%Y-%m-%d")
+            registration_date=datetime.now().strftime("%Y-%m-%d"),
+            token=token or "Not provided"
         )
         
         return self.send_email(to_email, subject, body)
@@ -250,7 +282,7 @@ class EmailSender:
         
         return self.send_email(to_email, subject, body)
 
-# === Streamlit Integration Helpers ===
+# === Utility Functions ===
 def show_email_status(success: bool, message: str):
     """Display email status in Streamlit UI"""
     if success:
@@ -268,7 +300,24 @@ def check_email_config_ui():
             st.warning("⚠️ Email not configured")
             st.info("Set email environment variables for production deployment")
 
-# === Utility Functions ===
+# === Legacy Functions for Backward Compatibility ===
+def send_otp_to_email(email: str, otp: str) -> tuple[bool, str]:
+    """Legacy function name - redirects to send_otp_email"""
+    sender = EmailSender()
+    return sender.send_otp_email(email, otp)
+
+def send_email_legacy(to_email: str = None, subject: str = "Notification", 
+                     body: str = "", html_body: Optional[str] = None, 
+                     email: str = None) -> bool:
+    """Legacy send_email function for backward compatibility"""
+    sender = EmailSender()
+    recipient_email = to_email or email
+    
+    if not recipient_email:
+        return False
+    
+    success, _ = sender.send_email(recipient_email, subject, body, html_body)
+    return success
 def validate_email_format(email: str) -> bool:
     """Basic email format validation"""
     import re
@@ -298,7 +347,3 @@ def test_email_configuration():
     )
     
     return success, message
-    # Test welcome email
-    send_welcome_email(test_email, "TestUser", "pro")
-    
-    print("Email tests completed!")
