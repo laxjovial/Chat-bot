@@ -4,8 +4,8 @@
 # Gmail Configuration (most common)
 smtp_server: smtp.gmail.com
 smtp_port: 587
-smtp_user: your-email@gmail.com
-smtp_password: your-app-password  # Use App Password, not regular password
+smtp_user: your-email@gmail.com # This will be overridden by secrets.toml if present
+smtp_password: your-app-password  # This will be overridden by secrets.toml if present
 from_email: no-reply@yourapp.com
 
 # Alternative configurations:
