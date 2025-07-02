@@ -43,7 +43,10 @@ def process_upload(file, user_token: str, section: str) -> str:
 
     # 2. Load + chunk
     docs = load_document_file(saved_path)
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150) # Adjusted chunk size for better summaries
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=config_manager.get('rag.chunk_size', 1000), 
+        chunk_overlap=config_manager.get('rag.chunk_overlap', 150)
+    )
     chunks = splitter.split_documents(docs)
 
     # 3. Vectorize
@@ -94,6 +97,7 @@ def clear_indexed_data(user_token: str, section: str) -> str:
 if __name__ == "__main__":
     import streamlit as st
     import logging
+    import os
     
     logging.basicConfig(level=logging.INFO)
 
@@ -110,8 +114,9 @@ if __name__ == "__main__":
     # Create dummy config.yml for testing embedder
     dummy_config_dir = Path("data")
     dummy_config_dir.mkdir(exist_ok=True)
-    with open(dummy_config_dir / "config.yml", "w") as f:
-        f.write("rag:\n  embedding_mode: openai\n  embedding_model: text-embedding-ada-002\n")
+    dummy_config_path = dummy_config_dir / "config.yml"
+    with open(dummy_config_path, "w") as f:
+        f.write("rag:\n  embedding_mode: openai\n  embedding_model: text-embedding-ada-002\n  chunk_size: 500\n  chunk_overlap: 50\n")
     
     # Create dummy text file for upload
     dummy_upload_dir = Path("temp_test_data/uploads/test_user/test_section")
@@ -133,8 +138,11 @@ if __name__ == "__main__":
     try:
         # We need to explicitly create the ConfigManager instance if running standalone
         from config.config_manager import ConfigManager
-        global config_manager # Ensure the global instance is initialized
+        # Reset the singleton instance to ensure it reloads with mock data
+        ConfigManager._instance = None
+        ConfigManager._is_loaded = False
         config_manager = ConfigManager()
+        print("ConfigManager initialized for testing.")
 
         mock_file = MockUploadedFile(dummy_file_path)
         result_msg = process_upload(mock_file, user_token="test_user", section="test_section")
@@ -156,8 +164,11 @@ if __name__ == "__main__":
         if Path("temp_test_data").exists():
             shutil.rmtree("temp_test_data")
         if dummy_config_dir.exists():
-            shutil.rmtree(dummy_config_dir)
-        if BASE_UPLOAD_DIR.exists() and "test_user" in str(BASE_UPLOAD_DIR / "test_user"):
+            if dummy_config_path.exists():
+                dummy_config_path.unlink()
+            if not list(dummy_config_dir.iterdir()):
+                dummy_config_dir.rmdir()
+        if BASE_UPLOAD_DIR.exists() and (BASE_UPLOAD_DIR / "test_user").exists():
             shutil.rmtree(BASE_UPLOAD_DIR / "test_user")
-        if BASE_VECTOR_DIR.exists() and "test_user" in str(BASE_VECTOR_DIR / "test_user"):
+        if BASE_VECTOR_DIR.exists() and (BASE_VECTOR_DIR / "test_user").exists():
             shutil.rmtree(BASE_VECTOR_DIR / "test_user")
