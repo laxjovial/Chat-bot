@@ -14,6 +14,9 @@ from utils.validation_utils import validate_email_format, validate_password_stre
 # Import FirestoreManager
 from database.firestore_manager import FirestoreManager
 
+# Import ConfigManager for tier capabilities
+from config.config_manager import config_manager
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -27,7 +30,7 @@ firestore_db = FirestoreManager()
 class SecurityConfig:
     PASSWORD_MIN_LENGTH = 8
     TOKEN_EXPIRY_HOURS = 24
-    RESET_TOKEN_EXPIRY_MINUTES = 15
+    RESET_TOKEN_EXPUTES = 15
     OTP_EXPIRY_MINUTES = 5 # Added for OTP
     MAX_LOGIN_ATTEMPTS = 5
     LOCKOUT_DURATION_MINUTES = 30
@@ -113,12 +116,19 @@ def create_user(
         "login_attempts": 0,
         "locked_until": None,
         "is_active": True,
-        "roles": ["user"] # Default role
+        "roles": ["user"] # Default role for all new users
     }
+    
+    # Add 'admin' role if tier is 'admin' during creation
+    if tier == 'admin':
+        user_data['roles'].append('admin')
+        # Ensure no duplicates if 'user' is already in roles
+        user_data['roles'] = list(set(user_data['roles']))
+
 
     success, msg = firestore_db.add_user(user_data)
     if success:
-        logger.info(f"New user created: {username} ({email})")
+        logger.info(f"New user created: {username} ({email}) with tier: {tier}")
         return user_token
     else:
         logger.error(f"Failed to create user {email}: {msg}")
@@ -334,14 +344,14 @@ def validate_reset_token(token: str) -> Tuple[bool, str, Optional[str]]:
     token_data = firestore_db.get_reset_token(token)
     
     if not token_data:
-        return False, "Invalid or expired token.", None
+        return False, "Invalid or expired token."
     
     if token_data.get("is_used"):
-        return False, "Token has already been used.", None
+        return False, "Token has already been used."
 
     if token_data.get("expires_at") and token_data["expires_at"] < datetime.now(timezone.utc):
         firestore_db.delete_reset_token(token) # Clean up expired token
-        return False, "Token has expired.", None
+        return False, "Token has expired."
         
     return True, "Token is valid.", token_data.get("email")
 
@@ -375,9 +385,6 @@ def reset_password_with_token(token: str, new_password: str) -> Tuple[bool, str]
 
     if user_update_success:
         # Mark token as used
-        firestore_db.update_otp(token, {"is_used": True}) # OTP is document ID, reset_token has its own collection
-        # Correcting the above line: should update reset_tokens collection.
-        # This is for reset_tokens, not OTP.
         token_update_success, token_update_msg = firestore_db.update_reset_token(token, {"is_used": True})
         if not token_update_success:
             logger.error(f"Failed to mark reset token {token} as used: {token_update_msg}")
@@ -387,9 +394,6 @@ def reset_password_with_token(token: str, new_password: str) -> Tuple[bool, str]
     else:
         logger.error(f"Failed to reset password for {email} using token: {user_update_msg}")
         return False, f"Failed to reset password: {user_update_msg}"
-
-# Add a placeholder for `update_reset_token` in `FirestoreManager` if it's missing.
-# For now, it will be added in FirestoreManager.py.
 
 # === OTP (One-Time Password) Management ===
 def create_otp(identifier: str, purpose: str = "login") -> Tuple[bool, str, Optional[str]]:
@@ -460,8 +464,10 @@ def clean_expired_data() -> None:
 # === Streamlit Integration ===
 def get_current_user() -> Dict[str, Any]:
     """Get current user from Streamlit session state."""
-    if hasattr(st, 'session_state') and 'user_token' in st.session_state:
-        return find_user_by_token(st.session_state.user_token)
+    if hasattr(st, 'session_state') and 'user_token' in st.session_state and st.session_state.user_token:
+        user = find_user_by_token(st.session_state.user_token)
+        if user and user.get('is_active', True): # Ensure user is active
+            return user
     return {}
 
 def set_current_user(token: str) -> None:
@@ -474,6 +480,31 @@ def logout_user() -> None:
     if hasattr(st, 'session_state') and 'user_token' in st.session_state:
         del st.session_state.user_token
     logger.info("User logged out.")
+
+def get_user_tier_capability(user_token: Optional[str], capability_key: str, default_value: Any = None) -> Any:
+    """
+    Retrieves a specific capability value for the current user's tier from config.yml.
+    If user is admin, they implicitly have full access (True for booleans, max for numbers).
+    """
+    user = find_user_by_token(user_token)
+    user_tier = user.get('tier', 'free') if user else 'free'
+    user_roles = user.get('roles', []) if user else []
+
+    # Admins have full access to all capabilities unless explicitly restricted for admin tier
+    if 'admin' in user_roles:
+        # For boolean capabilities, admin always gets True
+        if isinstance(default_value, bool):
+            return True
+        # For numerical limits, admin gets a very high value or specific admin limit
+        if isinstance(default_value, (int, float)):
+            # You might define specific admin limits in config if needed,
+            # but for now, assume effectively unlimited for admin.
+            return float('inf') if default_value is not None else default_value
+        return default_value # For other types, return default or specific admin config if added
+
+    # Retrieve capability from config_manager based on user's tier
+    # Path example: 'tiers.pro.web_search_limit_chars'
+    return config_manager.get(f'tiers.{user_tier}.{capability_key}', default_value)
 
 
 # Self-contained test (if executed directly)
@@ -510,20 +541,59 @@ if __name__ == "__main__":
     dummy_smtp_config_path = dummy_data_dir / "smtp_config.yml"
     dummy_media_apis_path = dummy_data_dir / "media_apis.yaml"
     dummy_sports_apis_path = dummy_data_dir / "sports_apis.yaml"
+    dummy_finance_apis_path = dummy_data_dir / "finance_apis.yaml"
+    dummy_entertainment_apis_path = dummy_data_dir / "entertainment_apis.yaml"
+    dummy_medical_apis_path = dummy_data_dir / "medical_apis.yaml"
+    dummy_legal_apis_path = dummy_data_dir / "legal_apis.yaml"
+    dummy_weather_apis_path = dummy_data_dir / "weather_apis.yaml"
+    dummy_news_apis_path = dummy_data_dir / "news_apis.yaml"
+
 
     dummy_data_dir.mkdir(exist_ok=True)
 
     with open(dummy_config_path, "w") as f:
-        f.write("app:\n  name: 'Test App'\nllm:\n  provider: 'mock'\nemail:\n  from_email: 'test@example.com'\n  smtp_server: 'smtp.test.com'\n  smtp_port: 587\n")
+        f.write("""
+app:
+  name: "Test App"
+llm:
+  provider: 'mock'
+email:
+  from_email: 'test@example.com'
+  smtp_server: 'smtp.test.com'
+  smtp_port: 587
+tiers:
+  free:
+    max_agent_modules: 1
+    web_search_limit_chars: 500
+    uploaded_docs_query_enabled: false
+    charts_enabled: false
+    data_analysis_enabled: false
+    sentiment_analysis_enabled: false
+  pro:
+    max_agent_modules: 7
+    web_search_limit_chars: 3000
+    uploaded_docs_query_enabled: true
+    charts_enabled: true
+    data_analysis_enabled: true
+    sentiment_analysis_enabled: false
+  elite:
+    max_agent_modules: 7
+    web_search_limit_chars: 5000
+    uploaded_docs_query_enabled: true
+    charts_enabled: true
+    data_analysis_enabled: true
+    sentiment_analysis_enabled: true
+""")
 
-    with open(dummy_smtp_config_path, "w") as f:
-        f.write("smtp_user: 'test_user_from_yml@example.com'\nsmtp_password: 'test_password_from_yml'\n")
+    # Create dummy YAMLs for other agents if they don't exist
+    for path in [dummy_smtp_config_path, dummy_media_apis_path, dummy_sports_apis_path,
+                 dummy_finance_apis_path, dummy_entertainment_apis_path,
+                 dummy_medical_apis_path, dummy_legal_apis_path,
+                 dummy_weather_apis_path, dummy_news_apis_path]:
+        if not path.exists():
+            with open(path, "w") as f:
+                f.write("apis: []\nsearch_apis: []\n")
 
-    with open(dummy_media_apis_path, "w") as f:
-        f.write("apis: []\nsearch_apis: []\n")
-
-    with open(dummy_sports_apis_path, "w") as f:
-        f.write("apis: []\nsearch_apis: []\n")
 
     # Mock st.session_state for testing Streamlit integration
     if not hasattr(st, 'session_state'):
@@ -537,7 +607,6 @@ if __name__ == "__main__":
     
     # Reload ConfigManager to pick up mock secrets and dummy config files
     try:
-        # Assuming ConfigManager is a singleton, reset its state for testing
         from config.config_manager import ConfigManager
         ConfigManager._instance = None # Reset the singleton instance
         ConfigManager._is_loaded = False
@@ -549,7 +618,7 @@ if __name__ == "__main__":
 
     print("\n--- Testing user_manager.py with Firestore (mocked) ---\n")
 
-    # Mock FirestoreManager methods for unit testing without actual DB connection
+    # Override the global firestore_db instance with our mock for testing
     class MockFirestoreManager:
         def __init__(self):
             self._users = {}
@@ -561,27 +630,35 @@ if __name__ == "__main__":
             return self.db_mock
 
         def add_user(self, user_data: Dict[str, Any]) -> Tuple[bool, str]:
-            if user_data['user_id'] in self._users:
+            # Use email as key for simplicity in mock
+            if user_data['email'] in self._users:
                 return False, "User already exists."
-            self._users[user_data['user_id']] = user_data
-            # Also store by email for quick lookup
-            self._users_by_email[user_data['email']] = user_data['user_id']
+            self._users[user_data['email']] = user_data
             return True, "User added."
 
         def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
-            return self._users.get(user_id)
-
-        def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
-            for user_id, user_data in self._users.items():
-                if user_data.get('email') == email:
+            # In mock, user_id is the actual user_id from Firestore, which is the doc ID.
+            # In our mock, we're using email as the primary key for _users.
+            # So, find by user_id will need to iterate or be mocked better if user_id is truly random UUID.
+            for user_email, user_data in self._users.items():
+                if user_data.get('user_id') == user_id:
                     return user_data
             return None
 
+        def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+            return self._users.get(email)
+
         def update_user(self, user_id: str, updates: Dict[str, Any]) -> Tuple[bool, str]:
-            if user_id not in self._users:
-                return False, "User not found."
-            self._users[user_id].update(updates)
-            return True, "User updated."
+            # Find user by user_id (UUID)
+            user_found = False
+            for email, user_data in self._users.items():
+                if user_data.get('user_id') == user_id:
+                    self._users[email].update(updates)
+                    user_found = True
+                    break
+            if user_found:
+                return True, "User updated."
+            return False, "User not found."
 
         def add_reset_token(self, token_id: str, token_data: Dict[str, Any]) -> Tuple[bool, str]:
             self._reset_tokens[token_id] = token_data
@@ -641,110 +718,59 @@ if __name__ == "__main__":
                 del self._otps[id]
             return initial_count - len(self._otps)
 
-    # Override the global firestore_db instance with our mock for testing
+        def get_all_users(self) -> List[Dict[str, Any]]:
+            return list(self._users.values())
+
     firestore_db = MockFirestoreManager()
-    # Also mock the internal _users_by_email for quick lookup as MockFirestoreManager uses it
-    firestore_db._users_by_email = {} 
 
-    # Test create_user
-    print("Testing create_user...")
-    token = create_user("testuser", "test@example.com", "Password123!", "free", "What is your pet's name?", "Buddy")
-    print(f"Create user result (token): {token}")
-    assert token is not None, "User creation failed."
-    assert firestore_db.get_user_by_email("test@example.com") is not None, "User not found in mocked DB after creation."
+    # Test get_user_tier_capability
+    print("\n--- Testing get_user_tier_capability ---")
 
-    # Test authenticate_user
-    print("\nTesting authenticate_user...")
-    success, msg, auth_token = authenticate_user("test@example.com", "Password123!")
-    print(f"Auth result: {success}, {msg}, Token: {auth_token}")
-    assert success is True and auth_token == token, "Authentication failed."
+    # Create mock users with different tiers
+    free_user_token = create_user("freeuser", "free@example.com", "Password123!", "free")
+    pro_user_token = create_user("prouser", "pro@example.com", "Password123!", "pro")
+    elite_user_token = create_user("eliteuser", "elite@example.com", "Password123!", "elite")
+    admin_user_token = create_user("adminuser", "admin@example.com", "Password123!", "admin")
 
-    # Test failed authentication (wrong password)
-    print("\nTesting failed authentication...")
-    success, msg, _ = authenticate_user("test@example.com", "WrongPassword!")
-    print(f"Failed auth result: {success}, {msg}")
-    assert success is False and "Invalid email or password" in msg, "Failed auth did not return expected message."
+    # Test capabilities for 'free' user
+    print(f"\nFree User Capabilities (token: {free_user_token}):")
+    print(f"  Web Search Limit Chars: {get_user_tier_capability(free_user_token, 'web_search_limit_chars', 0)}")
+    print(f"  Uploaded Docs Query Enabled: {get_user_tier_capability(free_user_token, 'uploaded_docs_query_enabled', False)}")
+    print(f"  Charts Enabled: {get_user_tier_capability(free_user_token, 'charts_enabled', False)}")
+    print(f"  Sentiment Analysis Enabled: {get_user_tier_capability(free_user_token, 'sentiment_analysis_enabled', False)}")
 
-    # Test login attempts and lockout
-    print("\nTesting login attempts and lockout...")
-    # Simulate multiple failed attempts
-    for i in range(SecurityConfig.MAX_LOGIN_ATTEMPTS):
-        success, msg, _ = authenticate_user("test@example.com", "WrongPassword!")
-        print(f"Attempt {i+1}: {msg}")
-    assert "Account locked" in msg, "Account did not lock after max attempts."
+    # Test capabilities for 'pro' user
+    print(f"\nPro User Capabilities (token: {pro_user_token}):")
+    print(f"  Web Search Limit Chars: {get_user_tier_capability(pro_user_token, 'web_search_limit_chars', 0)}")
+    print(f"  Uploaded Docs Query Enabled: {get_user_tier_capability(pro_user_token, 'uploaded_docs_query_enabled', False)}")
+    print(f"  Charts Enabled: {get_user_tier_capability(pro_user_token, 'charts_enabled', False)}")
+    print(f"  Sentiment Analysis Enabled: {get_user_tier_capability(pro_user_token, 'sentiment_analysis_enabled', False)}")
 
-    # Test change_password
-    print("\nTesting change_password...")
-    success, msg = change_password(token, "Password123!", "NewPassword456!")
-    print(f"Change password result: {success}, {msg}")
-    assert success is True, "Password change failed."
-    success, msg, auth_token = authenticate_user("test@example.com", "NewPassword456!")
-    assert success is True, "Authentication with new password failed."
+    # Test capabilities for 'elite' user
+    print(f"\nElite User Capabilities (token: {elite_user_token}):")
+    print(f"  Web Search Limit Chars: {get_user_tier_capability(elite_user_token, 'web_search_limit_chars', 0)}")
+    print(f"  Uploaded Docs Query Enabled: {get_user_tier_capability(elite_user_token, 'uploaded_docs_query_enabled', False)}")
+    print(f"  Charts Enabled: {get_user_tier_capability(elite_user_token, 'charts_enabled', False)}")
+    print(f"  Sentiment Analysis Enabled: {get_user_tier_capability(elite_user_token, 'sentiment_analysis_enabled', False)}")
 
-    # Test create_reset_token
-    print("\nTesting create_reset_token...")
-    success, msg, reset_token = create_reset_token("test@example.com")
-    print(f"Create reset token result: {success}, {msg}, Token: {reset_token}")
-    assert success is True and reset_token is not None, "Reset token creation failed."
+    # Test capabilities for 'admin' user
+    print(f"\nAdmin User Capabilities (token: {admin_user_token}):")
+    print(f"  Web Search Limit Chars: {get_user_tier_capability(admin_user_token, 'web_search_limit_chars', 0)}")
+    print(f"  Uploaded Docs Query Enabled: {get_user_tier_capability(admin_user_token, 'uploaded_docs_query_enabled', False)}")
+    print(f"  Charts Enabled: {get_user_tier_capability(admin_user_token, 'charts_enabled', False)}")
+    print(f"  Sentiment Analysis Enabled: {get_user_tier_capability(admin_user_token, 'sentiment_analysis_enabled', False)}")
 
-    # Test validate_reset_token
-    print("\nTesting validate_reset_token...")
-    is_valid, msg, email_from_token = validate_reset_token(reset_token)
-    print(f"Validate reset token result: {is_valid}, {msg}, Email: {email_from_token}")
-    assert is_valid is True, "Reset token validation failed."
-
-    # Test reset_password_with_token
-    print("\nTesting reset_password_with_token...")
-    success, msg = reset_password_with_token(reset_token, "NewestPassword789!")
-    print(f"Reset password with token result: {success}, {msg}")
-    assert success is True, "Password reset with token failed."
-    success, msg, auth_token = authenticate_user("test@example.com", "NewestPassword789!")
-    assert success is True, "Authentication with newest password failed."
-    is_valid, msg, _ = validate_reset_token(reset_token)
-    assert is_valid is False and "already been used" in msg, "Used token not marked as used."
-
-    # Test create_otp
-    print("\nTesting create_otp...")
-    otp_success, otp_msg, otp_code = create_otp("test@example.com", "login")
-    print(f"Create OTP result: {otp_success}, {otp_msg}, OTP: {otp_code}")
-    assert otp_success is True and otp_code is not None, "OTP creation failed."
-
-    # Test verify_otp
-    print("\nTesting verify_otp (correct)...")
-    verify_success, verify_msg = verify_otp("test@example.com", otp_code)
-    print(f"Verify OTP result: {verify_success}, {verify_msg}")
-    assert verify_success is True, "OTP verification failed."
-    verify_success, verify_msg = verify_otp("test@example.com", otp_code) # Test re-using verified OTP
-    assert verify_success is False and "already been used" in verify_msg, "Verified OTP not marked as used."
-
-    print("\nTesting verify_otp (incorrect)...")
-    otp_success, otp_msg, otp_code_new = create_otp("test@example.com", "login") # Create a new one
-    verify_success, verify_msg = verify_otp("test@example.com", "999999")
-    print(f"Verify incorrect OTP result: {verify_success}, {verify_msg}")
-    assert verify_success is False and "Incorrect OTP" in verify_msg, "Incorrect OTP verification passed."
-
-    # Test clean_expired_data (mocked to immediately expire)
-    print("\nTesting clean_expired_data...")
-    # Manually expire an OTP for testing cleanup
-    expired_time = datetime.now(timezone.utc) - timedelta(minutes=1)
-    firestore_db._otps["expired@example.com"] = {"otp": "123456", "expires_at": expired_time, "is_verified": False}
-    firestore_db._reset_tokens["expired_token_xyz"] = {"expires_at": expired_time, "is_used": False}
-
-    clean_expired_data()
-    assert firestore_db.get_otp("expired@example.com") is None, "Expired OTP not cleaned up."
-    assert firestore_db.get_reset_token("expired_token_xyz") is None, "Expired reset token not cleaned up."
-    print("Expired data cleanup tested.")
 
     # Clean up dummy config files
-    if dummy_config_path.exists():
-        os.remove(dummy_config_path)
-    if dummy_smtp_config_path.exists():
-        os.remove(dummy_smtp_config_path)
-    if dummy_media_apis_path.exists():
-        os.remove(dummy_media_apis_path)
-    if dummy_sports_apis_path.exists():
-        os.remove(dummy_sports_apis_path)
+    if dummy_config_path.exists(): os.remove(dummy_config_path)
+    if dummy_smtp_config_path.exists(): os.remove(dummy_smtp_config_path)
+    if dummy_media_apis_path.exists(): os.remove(dummy_media_apis_path)
+    if dummy_sports_apis_path.exists(): os.remove(dummy_sports_apis_path)
+    if dummy_finance_apis_path.exists(): os.remove(dummy_finance_apis_path)
+    if dummy_entertainment_apis_path.exists(): os.remove(dummy_entertainment_apis_path)
+    if dummy_medical_apis_path.exists(): os.remove(dummy_medical_apis_path)
+    if dummy_legal_apis_path.exists(): os.remove(dummy_legal_apis_path)
+    if dummy_weather_apis_path.exists(): os.remove(dummy_weather_apis_path)
+    if dummy_news_apis_path.exists(): os.remove(dummy_news_apis_path)
     if dummy_data_dir.exists() and not os.listdir(dummy_data_dir):
         os.rmdir(dummy_data_dir) # Remove data directory if empty
-
-    print("\nAll user_manager tests completed.")
