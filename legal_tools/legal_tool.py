@@ -134,24 +134,24 @@ LEGAL_APIS_CONFIG = _load_legal_apis()
 @tool
 def legal_data_fetcher(
     api_name: str,
-    data_type: str, # e.g., "case_law_search", "statute_lookup", "regulation_search", "legal_news"
-    query: Optional[str] = None, # For search queries (e.g., case name, keyword)
-    jurisdiction: Optional[str] = None, # e.g., "US Federal", "California", "UK"
-    year: Optional[int] = None, # For specific year of case/statute
+    data_type: str, # e.g., "case_law_search", "statute_lookup", "regulation_search", "constitutional_law", "international_law", "legal_news"
+    query: Optional[str] = None, # For search queries (e.g., case name, keyword, article number)
+    jurisdiction: Optional[str] = None, # e.g., "US Federal", "California", "UK", "Germany", "EU", "International"
+    year: Optional[int] = None, # For specific year of case/statute/event
     limit: Optional[int] = None # For number of results
 ) -> str:
     """
-    Fetches legal data from configured APIs.
-    This is a placeholder and needs actual implementation to connect to APIs
-    like legal research databases (e.g., Fastcase, LexisNexis, Westlaw - often proprietary/expensive),
-    or public legal data sources.
+    Fetches legal data from configured APIs, covering general law, case law, statutes,
+    regulations, constitutional law, and international law across various jurisdictions.
+    This is a placeholder and needs actual implementation to connect to real legal databases.
     
     Args:
-        api_name (str): The name of the API to use (e.g., "LegalDB", "GovLawAPI").
+        api_name (str): The name of the API to use (e.g., "LegalDB", "GovLawAPI", "IntlLawAPI").
                         This must match a 'name' field in data/legal_apis.yaml.
-        data_type (str): The type of data to fetch (e.g., "case_law_search", "statute_lookup", "regulation_search", "legal_news").
-        query (str, optional): A search query for case names, statute titles, or keywords.
-        jurisdiction (str, optional): The legal jurisdiction (e.g., "US Federal", "California", "UK").
+        data_type (str): The type of data to fetch (e.g., "case_law_search", "statute_lookup", "regulation_search",
+                         "constitutional_law", "international_law", "legal_news").
+        query (str, optional): A search query for case names, statute titles, legal concepts, or keywords.
+        jurisdiction (str, optional): The legal jurisdiction (e.g., "US Federal", "California", "UK", "Germany", "EU", "International").
         year (int, optional): Specific year for filtering results.
         limit (int, optional): Maximum number of records to return.
         
@@ -189,25 +189,52 @@ def legal_data_fetcher(
     url = endpoint
 
     try:
-        # --- Placeholder/Mock Implementations ---
+        # --- Placeholder/Mock Implementations for broader legal scope ---
         if api_name == "LegalDB":
             if data_type == "case_law_search":
                 return json.dumps([
-                    {"case_name": f"Mock Case {query}", "citation": "123 F.3d 456", "year": year if year else "2023", "jurisdiction": jurisdiction if jurisdiction else "US Federal", "summary": "This is a mock summary of a legal case."},
-                    {"case_name": "Another Mock Ruling", "citation": "789 S.Ct. 1011", "year": year if year else "2022", "jurisdiction": jurisdiction if jurisdiction else "US Federal", "summary": "Another mock summary of a legal ruling."}
+                    {"type": "Case Law", "title": f"Mock Case: {query or 'General Ruling'}", "citation": "123 F.3d 456 (2023)", "jurisdiction": jurisdiction if jurisdiction else "US Federal", "summary": "This is a mock summary of a legal case ruling, highlighting key legal principles."},
+                    {"type": "Case Law", "title": "Landmark Decision on Privacy", "citation": "456 P.3d 789 (2022)", "jurisdiction": jurisdiction if jurisdiction else "California", "summary": "Mock summary of a state-level privacy rights case."}
                 ][:limit if limit else 2])
             elif data_type == "statute_lookup":
-                return json.dumps({"statute_title": f"Mock Statute: {query}", "citation": "18 U.S.C. § 123", "jurisdiction": jurisdiction if jurisdiction else "US Federal", "text_snippet": "This is a mock snippet of a legal statute text."})
+                return json.dumps({"type": "Statute", "title": f"Mock Statute: {query or 'General Act'}", "citation": "18 U.S.C. § 123", "jurisdiction": jurisdiction if jurisdiction else "US Federal", "text_snippet": "This is a mock snippet of a legal statute text, outlining its purpose and scope."})
+            elif data_type == "constitutional_law":
+                return json.dumps({
+                    "type": "Constitutional Law",
+                    "document": f"{jurisdiction or 'US'} Constitution",
+                    "article_or_amendment": query or "First Amendment",
+                    "summary": f"Mock summary of constitutional provisions related to '{query or 'freedom of speech'}'. This section outlines fundamental rights and government powers."
+                })
+            elif data_type == "international_law":
+                return json.dumps({
+                    "type": "International Law",
+                    "treaty_or_convention": query or "Universal Declaration of Human Rights",
+                    "summary": f"Mock summary of international legal principles concerning '{query or 'human rights'}'. This body of law governs relations between states."
+                })
             else:
                 return f"Error: Unsupported data_type '{data_type}' for LegalDB."
         
         elif api_name == "GovLawAPI":
             if data_type == "regulation_search":
                 return json.dumps([
-                    {"regulation_title": f"Mock Regulation: {query}", "code": "40 CFR 123", "year": year if year else "2024", "jurisdiction": jurisdiction if jurisdiction else "US Federal", "summary": "This is a mock summary of a legal regulation."},
+                    {"type": "Regulation", "title": f"Mock Regulation: {query or 'Environmental Standard'}", "code": "40 CFR 123", "year": year if year else "2024", "jurisdiction": jurisdiction if jurisdiction else "US Federal", "summary": "This is a mock summary of a legal regulation, detailing compliance requirements."},
+                ][:limit if limit else 1])
+            elif data_type == "legal_news":
+                return json.dumps([
+                    {"type": "Legal News", "headline": f"Mock Legal News: {query or 'New Data Privacy Bill'}", "date": "2024-07-02", "source": "Legal Times", "summary": "Breaking news on a proposed legal reform impacting digital privacy across regions."},
                 ][:limit if limit else 1])
             else:
                 return f"Error: Unsupported data_type '{data_type}' for GovLawAPI."
+        
+        elif api_name == "IntlLawAPI": # New mock API for international law
+            if data_type == "international_law":
+                return json.dumps({
+                    "type": "International Law",
+                    "treaty_or_convention": query or "Geneva Conventions",
+                    "summary": f"Mock summary of international humanitarian law, specifically the '{query or 'Geneva Conventions'}', governing armed conflict and protecting civilians."
+                })
+            else:
+                return f"Error: Unsupported data_type '{data_type}' for IntlLawAPI."
 
         else:
             return f"Error: API '{api_name}' is not supported by legal_data_fetcher."
@@ -225,10 +252,11 @@ def legal_data_fetcher(
 @tool
 def legal_term_explainer(term: str) -> str:
     """
-    Explains a legal term in simple, understandable language.
+    Explains a legal term in simple, understandable language, covering general legal,
+    constitutional, and international law concepts.
     
     Args:
-        term (str): The legal term to explain (e.g., "habeas corpus", "res judicata", "tort").
+        term (str): The legal term to explain (e.g., "habeas corpus", "res judicata", "tort", "due process", "treaty").
         
     Returns:
         str: A simplified explanation of the legal term.
@@ -236,15 +264,19 @@ def legal_term_explainer(term: str) -> str:
     logger.info(f"Tool: legal_term_explainer called for term: '{term}'")
     term_lower = term.lower()
     if "habeas corpus" in term_lower:
-        return "**Habeas Corpus:** A legal writ (order) that requires a person under arrest to be brought before a judge or into court. The purpose is to ensure that a prisoner can be released from unlawful detention—that is, detention lacking sufficient cause or evidence."
+        return "**Habeas Corpus:** A legal writ (order) that requires a person under arrest to be brought before a judge or into court. The purpose is to ensure that a prisoner can be released from unlawful detention—that is, detention lacking sufficient cause or evidence. This is a fundamental safeguard against arbitrary detention, often found in constitutional law."
     elif "res judicata" in term_lower:
-        return "**Res Judicata:** Latin for 'a matter judged.' It's a legal principle that states once a final judgment has been made on a legal case, it cannot be litigated again between the same parties. It prevents relitigation of issues already decided."
+        return "**Res Judicata:** Latin for 'a matter judged.' It's a legal principle that states once a final judgment has been made on a legal case, it cannot be litigated again between the same parties. It prevents relitigation of issues already decided, promoting finality in legal proceedings."
     elif "tort" in term_lower:
-        return "**Tort:** In common law jurisdictions, a tort is a civil wrong that causes a claimant to suffer loss or harm, resulting in legal liability for the person who commits the tortious act. Examples include negligence, trespass, and defamation."
+        return "**Tort:** In common law jurisdictions, a tort is a civil wrong that causes a claimant to suffer loss or harm, resulting in legal liability for the person who commits the tortious act. Examples include negligence, trespass, and defamation. It's distinct from a crime or a breach of contract."
     elif "stare decisis" in term_lower:
-        return "**Stare Decisis:** Latin for 'to stand by things decided.' It's the legal principle by which judges are obliged to respect the precedents established by prior decisions. This means that once a court has made a decision on a particular legal issue, that decision should be followed in similar cases in the future."
+        return "**Stare Decisis:** Latin for 'to stand by things decided.' It's the legal principle by which judges are obliged to respect the precedents established by prior decisions. This means that once a court has made a decision on a particular legal issue, that decision should be followed in similar cases in the future, ensuring consistency and predictability in the law."
+    elif "due process" in term_lower:
+        return "**Due Process:** A fundamental constitutional guarantee that all legal proceedings will be fair and that one will be given notice of the proceedings and an opportunity to be heard before one's life, liberty, or property is taken away. It ensures fair treatment through the normal judicial system, especially as a citizen's entitlement."
+    elif "treaty" in term_lower:
+        return "**Treaty:** In international law, a treaty is a formally concluded and ratified agreement between states. Treaties are binding under international law and can cover a wide range of subjects, from peace and trade to human rights and environmental protection. They are a primary source of international law."
     else:
-        return f"I can explain common legal terms. Please provide a specific legal term for explanation."
+        return f"I can explain common legal terms, including those from general law, constitutional law, and international law. Please provide a specific legal term for explanation."
 
 @tool
 def contract_analyzer(file_path_str: str, analysis_type: str = "summary") -> str:
@@ -283,24 +315,25 @@ def contract_analyzer(file_path_str: str, analysis_type: str = "summary") -> str
     elif analysis_type == "parties":
         return f"""
         **Parties Identified in '{file_path.name}':**
-        - Party A: [Mock Name/Entity 1]
-        - Party B: [Mock Name/Entity 2]
+        - Party A: [Mock Name/Entity 1, e.g., "Acme Corp."]
+        - Party B: [Mock Name/Entity 2, e.g., "John Doe"]
         
         **Disclaimer:** This tool provides preliminary information and is NOT a substitute for professional legal advice.
         """
     elif analysis_type == "obligations":
         return f"""
         **Key Obligations in '{file_path.name}':**
-        - Party A: [Mock Obligation 1], [Mock Obligation 2]
-        - Party B: [Mock Obligation 3], [Mock Obligation 4]
+        - Party A: [Mock Obligation 1, e.g., "Deliver goods by X date"], [Mock Obligation 2, e.g., "Provide monthly reports"]
+        - Party B: [Mock Obligation 3, e.g., "Make payment within 30 days"], [Mock Obligation 4, e.g., "Maintain confidentiality"]
         
         **Disclaimer:** This tool provides preliminary information and is NOT a substitute for professional legal advice.
         """
     elif analysis_type == "termination_clauses":
         return f"""
         **Termination Clauses in '{file_path.name}':**
-        - Clause 10.1: Termination for convenience with 30 days notice.
-        - Clause 10.2: Termination for breach with cure period.
+        - Clause 10.1: Termination for convenience with 30 days written notice by either party.
+        - Clause 10.2: Termination for material breach, allowing a 15-day cure period.
+        - Clause 10.3: Automatic termination upon bankruptcy or insolvency of either party.
         
         **Disclaimer:** This tool provides preliminary information and is NOT a substitute for professional legal advice.
         """
@@ -327,6 +360,9 @@ if __name__ == "__main__":
             self.serpapi = {"api_key": "YOUR_SERPAPI_KEY"} # For scrape_web testing
             self.google_custom_search = {"api_key": "YOUR_GOOGLE_CUSTOM_SEARCH_API_KEY"} # For scrape_web testing
             self.legal_api_key = "YOUR_LEGAL_API_KEY" # Placeholder for a real legal API key
+            self.govlaw_api_key = "YOUR_GOVLAW_API_KEY" # Placeholder for a real gov law API key
+            self.intllaw_api_key = "YOUR_INTLLAW_API_KEY" # Placeholder for a real international law API key
+
 
     try:
         # Create dummy config.yml
@@ -393,6 +429,8 @@ apis:
     functions:
       case_law_search: {path: "cases"}
       statute_lookup: {path: "statutes"}
+      constitutional_law: {path: "constitution"}
+      international_law: {path: "international"}
     query_param: "q"
 
   - name: "GovLawAPI"
@@ -404,6 +442,18 @@ apis:
     default_params: {}
     functions:
       regulation_search: {path: "regulations"}
+      legal_news: {path: "news"}
+    query_param: "q"
+
+  - name: "IntlLawAPI"
+    type: "legal"
+    endpoint: "https://api.example.com/intllaw/" # Placeholder
+    key_name: "api_key"
+    key_value: "load_from_secrets.intllaw_api_key"
+    headers: {}
+    default_params: {}
+    functions:
+      international_law: {path: "treaties"}
     query_param: "q"
 
 search_apis: []
@@ -479,6 +529,15 @@ search_apis: []
         print(f"Case Search (mocked): {case_search}")
         statute_lookup = legal_data_fetcher(api_name="LegalDB", data_type="statute_lookup", query="data security")
         print(f"Statute Lookup (mocked): {statute_lookup}")
+        constitutional_lookup = legal_data_fetcher(api_name="LegalDB", data_type="constitutional_law", query="First Amendment", jurisdiction="US Federal")
+        print(f"Constitutional Law Lookup (mocked): {constitutional_lookup}")
+        international_law_lookup = legal_data_fetcher(api_name="LegalDB", data_type="international_law", query="human rights", jurisdiction="International")
+        print(f"International Law Lookup (mocked): {international_law_lookup}")
+        regulation_search = legal_data_fetcher(api_name="GovLawAPI", data_type="regulation_search", query="environmental", jurisdiction="Germany")
+        print(f"Regulation Search (mocked): {regulation_search}")
+        legal_news_fetch = legal_data_fetcher(api_name="GovLawAPI", data_type="legal_news", query="AI ethics")
+        print(f"Legal News Fetch (mocked): {legal_news_fetch}")
+
 
         # Test legal_term_explainer
         print("\n--- Testing legal_term_explainer ---")
@@ -486,6 +545,11 @@ search_apis: []
         print(f"Explanation of 'stare decisis':\n{term_explanation}")
         term_explanation2 = legal_term_explainer("tort")
         print(f"Explanation of 'tort':\n{term_explanation2}")
+        term_explanation3 = legal_term_explainer("due process")
+        print(f"Explanation of 'due process':\n{term_explanation3}")
+        term_explanation4 = legal_term_explainer("treaty")
+        print(f"Explanation of 'treaty':\n{term_explanation4}")
+
 
         # Test contract_analyzer (mocked)
         print("\n--- Testing contract_analyzer (mocked) ---")
@@ -497,6 +561,11 @@ search_apis: []
         print(f"Contract Summary:\n{contract_summary}")
         contract_parties = contract_analyzer(contract_file_path, analysis_type="parties")
         print(f"Contract Parties:\n{contract_parties}")
+        contract_obligations = contract_analyzer(contract_file_path, analysis_type="obligations")
+        print(f"Contract Obligations:\n{contract_obligations}")
+        contract_termination = contract_analyzer(contract_file_path, analysis_type="termination_clauses")
+        print(f"Contract Termination Clauses:\n{contract_termination}")
+
 
         # Test python_interpreter (example with mock data)
         print("\n--- Testing python_interpreter with mock data ---")
