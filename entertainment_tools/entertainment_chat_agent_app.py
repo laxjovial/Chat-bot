@@ -1,4 +1,4 @@
-# entertainment_chat_agent_app.py
+# ui/entertainment_chat_agent_app.py
 
 import streamlit as st
 from langchain_openai import ChatOpenAI
@@ -10,7 +10,7 @@ import logging
 
 # Assume config_manager and get_user_token exist in these paths
 from config.config_manager import config_manager
-from utils.user_manager import get_user_token # For getting a user token for session
+from utils.user_manager import get_current_user, get_user_tier_capability # For getting user token and capabilities
 from shared_tools.llm_embedding_utils import get_llm # For getting the LLM instance
 
 # Import the entertainment-specific tools
@@ -18,9 +18,11 @@ from entertainment_tools.entertainment_tool import (
     entertainment_search_web, 
     entertainment_query_uploaded_docs, 
     entertainment_summarize_document_by_path,
-    python_repl, # The Python REPL tool for data analysis
     entertainment_data_fetcher # The tool for fetching entertainment data
 )
+
+# Import the RBAC-enabled Python interpreter tool
+from shared_tools.python_interpreter_tool import python_interpreter_with_rbac
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -104,14 +106,28 @@ except Exception as e:
     st.stop()
 
 # --- Agent Setup ---
-# Include the Python REPL tool and the entertainment data fetcher
+# Get current user for RBAC checks
+current_user = get_current_user()
+user_token = current_user.get('user_id') # Use user_id as user_token for consistency with RBAC checks
+# If user_id is not available (e.g., mock user), fall back to a default or handle appropriately
+if not user_token:
+    user_token = "default" # Fallback for guest users or testing
+
+# Define the base set of tools available to the Entertainment Agent
 tools = [
     entertainment_search_web,
     entertainment_query_uploaded_docs,
     entertainment_summarize_document_by_path,
-    python_repl, # For data analysis and complex logic
-    entertainment_data_fetcher # For fetching entertainment data
+    entertainment_data_fetcher # The tool for fetching entertainment data
 ]
+
+# Conditionally add the Python interpreter based on user's tier
+if get_user_tier_capability(user_token, 'data_analysis_enabled', False):
+    tools.append(python_interpreter_with_rbac)
+    logger.info(f"Python interpreter enabled for user {user_token} (Tier: {current_user.get('tier')}).")
+else:
+    logger.info(f"Python interpreter NOT enabled for user {user_token} (Tier: {current_user.get('tier')}).")
+
 
 # Define the agent prompt
 # The prompt guides the agent on how to use its tools and respond.
@@ -125,13 +141,11 @@ You have access to the following tools:
 - **`entertainment_search_web`**: Use this tool for general entertainment knowledge, current news (e.g., "latest movie trailers", "music festival announcements"), or anything that requires up-to-date information from the internet.
 - **`entertainment_query_uploaded_docs`**: Use this tool if the user's question seems to refer to specific entertainment documents or personal notes that might have been uploaded by them (e.g., "my movie watch list", "notes on a specific anime episode"). Always specify the `user_token` when calling this tool.
 - **`entertainment_summarize_document_by_path`**: Use this tool if the user explicitly asks you to summarize a document and provides a file path (e.g., "summarize the script for the new series at uploads/my_user/entertainment/script.pdf").
-- **`python_interpreter`**: This is a powerful tool. Use it for:
-    - **Data Analysis**: When the user asks for calculations, statistical analysis, or insights from structured data (e.g., analyzing movie ratings, box office numbers).
-    - **Complex Queries**: When a query requires logical processing, conditional statements, or data manipulation that cannot be directly answered by other tools.
-    - **Parsing JSON**: If `entertainment_data_fetcher` returns JSON, use `python_interpreter` to parse it (e.g., `import json; data = json.loads(tool_output); print(data[0]['title'])`).
-    - Remember to `import pandas as pd` and other necessary libraries if working with dataframes.
-    - Print your results clearly to stdout so I can see them.
 - **`entertainment_data_fetcher`**: Use this tool to retrieve specific entertainment data (movies, series, music, anime details) from various entertainment APIs. Understand its parameters (`api_name`, `query`, `media_type`, `id`, `year`, `limit`).
+- **`python_interpreter_with_rbac`**: This is a powerful tool for users with appropriate tiers. Use it for:
+    - **Parsing and Analyzing Fetched Data**: After using `entertainment_data_fetcher`, use this tool to parse the JSON output (e.g., `import json; data = json.loads(tool_output)`) and perform calculations, statistical analysis, or extract specific insights from entertainment datasets (e.g., analyzing movie ratings, box office numbers).
+    - **Complex Queries**: Any query that requires programmatic logic, conditional statements, or data manipulation that cannot be directly answered by other tools.
+    - Print your final results or findings clearly to stdout so I can see them.
 
 **General Guidelines:**
 - Prioritize using the tools to find answers.
@@ -151,6 +165,8 @@ Question: {input}
 prompt = PromptTemplate.from_template(template)
 
 # Create the agent
+# The `create_react_agent` function creates an agent that uses the ReAct framework.
+# `verbose=True` is useful for debugging to see the agent's thought process.
 agent = create_react_agent(llm, tools, prompt)
 agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
@@ -183,7 +199,11 @@ if user_query:
         with st.spinner("Thinking..."):
             try:
                 # Get the current user token. This is important for tools like entertainment_query_uploaded_docs.
-                current_user_token = get_user_token() 
+                current_user_obj = get_current_user()
+                current_user_token = current_user_obj.get('user_id') # Use user_id as token for RBAC checks
+                if not current_user_token:
+                    st.warning("Could not retrieve user token. Functionality might be limited.")
+                    current_user_token = "default" # Fallback for guest users or testing
 
                 # Prepare chat history for the agent.
                 chat_history_str = "\n".join([
@@ -206,5 +226,5 @@ if user_query:
                 logger.error(f"Agent execution failed: {e}", exc_info=True)
 
 st.markdown("---")
-st.caption(f"Current User Token: `{get_user_token()}` (for demo purposes)")
-st.caption("This agent uses web search, queries your uploaded documents, can summarize files, and fetches data from entertainment APIs.")
+st.caption(f"Current User Token: `{current_user.get('user_id', 'N/A')}` (for demo purposes)")
+st.caption("This agent uses web search, queries your uploaded documents, can summarize files, fetches data from entertainment APIs, and can perform data analysis based on your tier.")
