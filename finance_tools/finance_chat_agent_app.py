@@ -1,4 +1,4 @@
-# finance_chat_agent_app.py
+# ui/finance_chat_agent_app.py
 
 import streamlit as st
 from langchain_openai import ChatOpenAI
@@ -10,7 +10,7 @@ import logging
 
 # Assume config_manager and get_user_token exist in these paths
 from config.config_manager import config_manager
-from utils.user_manager import get_user_token # For getting a user token for session
+from utils.user_manager import get_current_user, get_user_tier_capability # For getting user token and capabilities
 from shared_tools.llm_embedding_utils import get_llm # For getting the LLM instance
 
 # Import the finance-specific tools
@@ -18,9 +18,14 @@ from finance_tools.finance_tool import (
     finance_search_web, 
     finance_query_uploaded_docs, 
     finance_summarize_document_by_path,
-    python_repl, # The Python REPL tool for data analysis
-    finance_data_fetcher # The tool for fetching financial data
+    finance_data_fetcher, # The tool for fetching financial data
+    stock_price_checker,
+    crypto_price_checker,
+    economic_indicator_checker
 )
+
+# Import the RBAC-enabled Python interpreter tool
+from shared_tools.python_interpreter_tool import python_interpreter_with_rbac
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -34,22 +39,17 @@ def initialize_app_config():
     """
     if not hasattr(st, 'secrets'):
         # This block is mainly for local testing outside of Streamlit's native 'secrets.toml'
-        # In a deployed Streamlit app, st.secrets will be automatically populated.
         class MockSecrets:
             def __init__(self):
                 self.openai = {"api_key": "sk-your-openai-key-here"} # Replace with a real key for live app
                 self.google = {"api_key": "AIzaSy_YOUR_GOOGLE_API_KEY_HERE"} # Replace with a real key
                 self.serpapi = {"api_key": "YOUR_SERPAPI_KEY_HERE"} 
                 self.google_custom_search = {"api_key": "YOUR_GOOGLE_CUSTOM_SEARCH_API_KEY_HERE"}
-                self.alphavantage_api_key = "YOUR_ALPHAVANTAGE_API_KEY_HERE" # For finance_data_fetcher
-                self.coingecko_api_key = "YOUR_COINGECKO_API_KEY_HERE" # For finance_data_fetcher
-                self.exchangerate_api_key = "YOUR_EXCHANGERATE_API_KEY_HERE" # For finance_data_fetcher
-                self.financial_news = {"api_key": "YOUR_FINANCIAL_NEWS_API_KEY_HERE"} # For finance_apis.yaml example
+                self.alpha_vantage = {"api_key": "YOUR_ALPHA_VANTAGE_API_KEY_HERE"}
+                self.coinmarketcap = {"api_key": "YOUR_COINMARKETCAP_API_KEY_HERE"}
         st.secrets = MockSecrets()
         logger.info("Mocked st.secrets for standalone testing.")
     
-    # The config_manager is a singleton and should be initialized on import.
-    # We just ensure it has loaded correctly.
     if not config_manager._is_loaded:
         try:
             logger.info("ConfigManager assumed to be initialized by importing. Ensure data/config.yml and other config files exist.")
@@ -104,36 +104,56 @@ except Exception as e:
     st.stop()
 
 # --- Agent Setup ---
-# Include the new Python REPL tool and the finance data fetcher
+# Get current user for RBAC checks
+current_user = get_current_user()
+user_token = current_user.get('user_id') # Use user_id as user_token for consistency with RBAC checks
+# If user_id is not available (e.g., mock user), fall back to a default or handle appropriately
+if not user_token:
+    user_token = "default" # Fallback for testing outside full auth flow
+
+# Define the base set of tools available to the Finance Agent
 tools = [
     finance_search_web,
     finance_query_uploaded_docs,
     finance_summarize_document_by_path,
-    python_repl, # For data analysis and complex logic
-    finance_data_fetcher # For fetching financial data
+    finance_data_fetcher, # The tool for fetching financial data
+    stock_price_checker,
+    crypto_price_checker,
+    economic_indicator_checker
 ]
+
+# Conditionally add the Python interpreter based on user's tier
+if get_user_tier_capability(user_token, 'data_analysis_enabled', False):
+    tools.append(python_interpreter_with_rbac)
+    logger.info(f"Python interpreter enabled for user {user_token} (Tier: {current_user.get('tier')}).")
+else:
+    logger.info(f"Python interpreter NOT enabled for user {user_token} (Tier: {current_user.get('tier')}).")
+
 
 # Define the agent prompt
 # The prompt guides the agent on how to use its tools and respond.
 template = """
-You are a highly specialized AI assistant focused on finance. Your primary goal is to provide accurate, concise, and helpful information, analysis, and insights related to financial markets, companies, economic data, cryptocurrencies, and currency exchange rates.
+You are a highly specialized AI assistant focused on finance and economic data. Your primary goal is to provide accurate, concise, and helpful information, analysis, and insights related to financial markets, investments, and economic indicators.
 You have access to the following tools:
 
 {tools}
 
 **Instructions for using tools:**
-- **`finance_search_web`**: Use this tool for general financial news, current market trends, or anything that requires up-to-date information from the broader internet.
-- **`finance_query_uploaded_docs`**: Use this tool if the user's question seems to refer to specific financial documents or reports that might have been uploaded by them (e.g., "my company's Q4 report", "the investment strategy I uploaded"). Always specify the `user_token` when calling this tool.
-- **`finance_summarize_document_by_path`**: Use this tool if the user explicitly asks you to summarize a document and provides a file path (e.g., "summarize the earnings call transcript at uploads/my_user/finance/transcript.txt").
-- **`finance_data_fetcher`**: This is your primary tool for structured financial data.
-    - **For Stock Data**: Use `api_name="AlphaVantage"` with `data_type` like "stock_prices", "company_overview", "global_quote". Provide `symbol`.
-    - **For Cryptocurrency Data**: Use `api_name="CoinGecko"` with `data_type` like "crypto_price" (requires `ids` and `vs_currencies`), "crypto_list", or "crypto_market_chart" (requires `ids`, `vs_currencies`, `days`).
-    - **For Currency Exchange Rates**: Use `api_name="ExchangeRate-API"` with `data_type` like "exchange_rate_latest" (requires `base_currency`) or "exchange_rate_convert" (requires `base_currency`, `target_currency`, `amount`).
+- **`finance_search_web`**: Use this tool for general financial news, economic trends, or anything that requires up-to-date information from the broader internet on financial topics.
+- **`finance_query_uploaded_docs`**: Use this tool if the user's question seems to refer to specific financial documents, reports, or personal financial notes that might have been uploaded by them (e.g., "my investment portfolio details", "summary of the annual report I uploaded"). Always specify the `user_token` when calling this tool.
+- **`finance_summarize_document_by_path`**: Use this tool if the user explicitly asks you to summarize a document and provides a file path (e.g., "summarize the annual report at uploads/my_user/finance/report.pdf").
+- **`finance_data_fetcher`**: This is your primary tool for structured financial data from configured APIs.
+    - **For Stock Data**: Use `api_name="AlphaVantage"` or `api_name="FinancialModelingPrep"` with `data_type="stock_data"`. Provide `symbol` and `interval` (for historical).
+    - **For Crypto Data**: Use `api_name="CoinMarketCap"` or `api_name="CoinGecko"` with `data_type="crypto_data"`. Provide `symbol`.
+    - **For Economic Indicators**: Use `api_name="AlphaVantage"` with `data_type="economic_indicator"`. Provide `indicator_type`.
     - Always specify the `api_name` and `data_type`, and then the relevant parameters for that specific API and data type.
-    - The output will be a JSON string. You will likely need to use `python_interpreter` to parse and analyze this JSON.
-- **`python_interpreter`**: This is a powerful tool. Use it for:
-    - **Parsing and Analyzing Fetched Data**: After using `finance_data_fetcher`, use this tool to parse the JSON output (e.g., `import json; data = json.loads(tool_output)`) and perform calculations, statistical analysis, time-series analysis (e.g., `import pandas as pd`), or extract specific insights.
-    - **Complex Calculations**: Any query that requires programmatic logic, conditional statements, or data manipulation that cannot be directly answered by other tools.
+    - The output will be a JSON string. You will likely need to use `python_interpreter_with_rbac` to parse and analyze this JSON.
+- **`stock_price_checker`**: Use this tool if the user asks for the current price of a specific stock.
+- **`crypto_price_checker`**: Use this tool if the user asks for the current price of a specific cryptocurrency.
+- **`economic_indicator_checker`**: Use this tool if the user asks for the latest value of a specific economic indicator.
+- **`python_interpreter_with_rbac`**: This is a powerful tool for users with appropriate tiers. Use it for:
+    - **Parsing and Analyzing Fetched Data**: After using `finance_data_fetcher`, use this tool to parse the JSON output (e.g., `import json; data = json.loads(tool_output)`) and perform calculations, statistical analysis, or extract specific insights from financial datasets (e.g., calculating moving averages, volatility, correlations).
+    - **Complex Queries**: Any query that requires programmatic logic, conditional statements, or data manipulation that cannot be directly answered by other tools.
     - Print your final results or findings clearly to stdout so I can see them.
 
 **General Guidelines:**
@@ -141,8 +161,8 @@ You have access to the following tools:
 - If a question can be answered by multiple tools, choose the most specific and efficient one.
 - If you cannot find an answer using your tools, state that clearly and politely.
 - When responding, be concise and directly answer the user's question.
-- Cite your sources (e.g., "[From Web Search]", "[From Uploaded Docs]", "[Python Analysis]", "[From AlphaVantage]") when you use a tool to retrieve information or perform analysis.
-- Maintain a professional, helpful, and informative tone, suitable for financial contexts.
+- Cite your sources (e.g., "[From Web Search]", "[From Uploaded Docs]", "[Python Analysis]", "[From Alpha Vantage]") when you use a tool to retrieve information or perform analysis.
+- Maintain a professional, objective, and informative tone.
 
 Begin!
 
@@ -155,17 +175,18 @@ prompt = PromptTemplate.from_template(template)
 
 # Create the agent
 agent = create_react_agent(llm, tools, prompt)
+# Pass the user_token to the agent executor so it's available for tools
 agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="Finance AI Assistant", page_icon="📈", layout="centered")
 st.title("Finance AI Assistant 📈")
-st.markdown("Your dedicated AI for financial insights and analysis! Ask me anything about markets, companies, economic data, crypto, or exchange rates, and I'll use my tools to help.")
+st.markdown("Your dedicated AI for financial and economic insights. Ask me anything about markets, investments, and data analysis!")
 
 # Initialize chat history in Streamlit's session state
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        AIMessage(content="Hello! I am your Finance AI Assistant. How can I help you today?")
+        AIMessage(content="Hello! I am your Finance AI Assistant. How can I help you with your financial queries today?")
     ]
 
 # Display chat history
@@ -186,7 +207,11 @@ if user_query:
         with st.spinner("Thinking..."):
             try:
                 # Get the current user token. This is important for tools like finance_query_uploaded_docs.
-                current_user_token = get_user_token() 
+                current_user_obj = get_current_user()
+                current_user_token = current_user_obj.get('user_id') # Use user_id as token for RBAC checks
+                if not current_user_token:
+                    st.warning("Could not retrieve user token. Functionality might be limited.")
+                    current_user_token = "default" # Fallback for guest users or testing
 
                 # Prepare chat history for the agent.
                 chat_history_str = "\n".join([
@@ -209,5 +234,5 @@ if user_query:
                 logger.error(f"Agent execution failed: {e}", exc_info=True)
 
 st.markdown("---")
-st.caption(f"Current User Token: `{get_user_token()}` (for demo purposes)")
-st.caption("This agent uses web search, queries your uploaded documents, can summarize files, and performs data analysis via a Python interpreter.")
+st.caption(f"Current User Token: `{current_user.get('user_id', 'N/A')}` (for demo purposes)")
+st.caption("This agent uses web search, queries your uploaded documents, can summarize files, fetches data from financial APIs, and can perform data analysis based on your tier.")
