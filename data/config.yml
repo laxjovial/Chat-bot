@@ -1,21 +1,102 @@
 # data/config.yml
+
 app:
-  name: "Unified AI Agent"
-  version: "1.0.0"
-  environment: "development"
+  name: "Unified AI Assistant"
+  description: "Your intelligent companion for every domain."
 
 llm:
-  provider: "openai" # or "ollama", "google", etc.
-  model: "gpt-4o" # or "llama3", "gemini-pro"
-  temperature: 0.7
-  max_tokens: 1500
+  provider: openai # Options: openai, google, ollama (for local models)
+  model: gpt-3.5-turbo # For OpenAI: gpt-4, gpt-3.5-turbo. For Google: gemini-pro. For Ollama: llama3, mistral, etc.
+  temperature: 0.5
+  # For Ollama, specify base URL if not default
+  # ollama_base_url: "http://localhost:11434"
 
 rag:
-  top_k_results: 5
-  min_relevance_score: 0.7
+  chunk_size: 1000 # Size of text chunks for vector database
+  chunk_overlap: 100 # Overlap between chunks
+  max_docs_to_index: 50 # Max documents a user can index per section (e.g., sports, finance)
 
 web_scraping:
-  user_agent: "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
   timeout_seconds: 10
+  max_search_results: 5 # Max results to fetch from web search for general queries
 
-# Add other general configurations as needed
+# --- NEW: User Tier Definitions ---
+tiers:
+  free:
+    description: "Basic access with limited features."
+    max_agent_modules: 2 # e.g., Sports, Weather
+    web_search_limit_chars: 1000 # Max characters in snippet
+    web_search_max_results: 3 # Max results from web search
+    uploaded_docs_query_enabled: false
+    uploaded_docs_max_files: 0
+    document_summarization_enabled: false
+    charts_enabled: false
+    data_analysis_enabled: false
+    time_series_analysis_enabled: false
+    sentiment_analysis_enabled: false
+    offline_dictionaries_enabled: true # Assuming this is a basic, always-on feature
+    mini_chatbot_enabled: false
+
+  basic:
+    description: "Expanded access to core features."
+    max_agent_modules: 4
+    web_search_limit_chars: 2000
+    web_search_max_results: 5
+    uploaded_docs_query_enabled: true
+    uploaded_docs_max_files: 10 # Max files per section
+    document_summarization_enabled: false
+    charts_enabled: false
+    data_analysis_enabled: false
+    time_series_analysis_enabled: false
+    sentiment_analysis_enabled: false
+    offline_dictionaries_enabled: true
+    mini_chatbot_enabled: false
+
+  pro:
+    description: "Full access to all agent modules and standard analysis."
+    max_agent_modules: 7 # All current agents
+    web_search_limit_chars: 3000
+    web_search_max_results: 7
+    uploaded_docs_query_enabled: true
+    uploaded_docs_max_files: 50
+    document_summarization_enabled: true
+    charts_enabled: true
+    data_analysis_enabled: true
+    time_series_analysis_enabled: true
+    sentiment_analysis_enabled: false # Sentiment is Elite/Premium
+    offline_dictionaries_enabled: true
+    mini_chatbot_enabled: false
+
+  elite:
+    description: "Advanced features including sentiment analysis and more data capabilities."
+    max_agent_modules: 7
+    web_search_limit_chars: 5000
+    web_search_max_results: 10
+    uploaded_docs_query_enabled: true
+    uploaded_docs_max_files: 200
+    document_summarization_enabled: true
+    charts_enabled: true
+    data_analysis_enabled: true
+    time_series_analysis_enabled: true
+    sentiment_analysis_enabled: true
+    offline_dictionaries_enabled: true
+    mini_chatbot_enabled: true # Mini-chatbot enabled for Elite+
+
+  premium:
+    description: "Unlimited access and priority support."
+    max_agent_modules: 7
+    web_search_limit_chars: 10000 # Very high limit
+    web_search_max_results: 15 # Very high limit
+    uploaded_docs_query_enabled: true
+    uploaded_docs_max_files: 1000 # Effectively unlimited
+    document_summarization_enabled: true
+    charts_enabled: true
+    data_analysis_enabled: true
+    time_series_analysis_enabled: true
+    sentiment_analysis_enabled: true
+    offline_dictionaries_enabled: true
+    mini_chatbot_enabled: true
+
+# Admin tier is managed separately via roles, not these feature flags.
+# Admin roles will have implicit full access to all features and admin-specific dashboards.
