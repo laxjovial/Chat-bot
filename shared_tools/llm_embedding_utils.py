@@ -10,11 +10,10 @@ from langchain_community.document_loaders import (
 )
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from typing import List
+from typing import List, Optional # Import Optional
 from pathlib import Path
 
 # Assume config_manager is correctly initialized elsewhere and accessible
-# This import relies on the 'config' directory being a package.
 from config.config_manager import config_manager 
 
 # === Embedding Selector ===
@@ -39,14 +38,17 @@ def get_embedder():
         raise ValueError(f"Unsupported embedding mode: {embedding_mode}")
 
 # === LLM Selector ===
-def get_llm():
+def get_llm(override_temperature: Optional[float] = None): # Added override_temperature
     """
     Gets the appropriate LLM instance based on global config.
     Supports OpenAI, Google Gemini, and Ollama.
+    Allows overriding the temperature setting from config.
     """
     llm_provider = config_manager.get('llm.provider', 'openai').lower()
     llm_model = config_manager.get('llm.model', 'gpt-4o')
-    temperature = config_manager.get('llm.temperature', 0.7)
+    
+    # Use override_temperature if provided, otherwise fall back to config
+    temperature = override_temperature if override_temperature is not None else config_manager.get('llm.temperature', 0.7)
 
     if llm_provider == "openai":
         openai_api_key = config_manager.get_secret('openai.api_key')
@@ -145,7 +147,8 @@ rag:
             print("Mocked st.secrets for standalone testing.")
         
         # Ensure config_manager is a fresh instance for this test run
-        ConfigManager._instance = None # Reset the singleton
+        # Reset the singleton instance to ensure it reloads with mock data
+        ConfigManager._instance = None
         ConfigManager._is_loaded = False
         config_manager = ConfigManager()
         print("ConfigManager initialized for testing.")
@@ -164,12 +167,19 @@ rag:
         except Exception as e:
             print(f"Error getting embedder: {e}")
 
-        # Test get_llm
+        # Test get_llm with default temperature
         try:
-            llm_model = get_llm()
-            print(f"LLM initialized: {type(llm_model).__name__}")
+            llm_model_default = get_llm()
+            print(f"LLM initialized with default temperature ({llm_model_default.temperature}): {type(llm_model_default).__name__}")
         except Exception as e:
-            print(f"Error getting LLM: {e}")
+            print(f"Error getting LLM with default temp: {e}")
+
+        # Test get_llm with overridden temperature
+        try:
+            llm_model_override = get_llm(override_temperature=0.9)
+            print(f"LLM initialized with overridden temperature ({llm_model_override.temperature}): {type(llm_model_override).__name__}")
+        except Exception as e:
+            print(f"Error getting LLM with override temp: {e}")
         
         # Test load_document_file and load_and_chunk_document
         dummy_file_path = Path("temp_test_doc_for_llm_utils.txt")
