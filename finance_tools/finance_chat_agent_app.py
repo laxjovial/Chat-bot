@@ -19,7 +19,7 @@ from finance_tools.finance_tool import (
     finance_query_uploaded_docs, 
     finance_summarize_document_by_path,
     python_repl, # The Python REPL tool for data analysis
-    finance_data_fetcher # The placeholder tool for fetching financial data
+    finance_data_fetcher # The tool for fetching financial data
 )
 
 # Set up logging
@@ -41,7 +41,9 @@ def initialize_app_config():
                 self.google = {"api_key": "AIzaSy_YOUR_GOOGLE_API_KEY_HERE"} # Replace with a real key
                 self.serpapi = {"api_key": "YOUR_SERPAPI_KEY_HERE"} 
                 self.google_custom_search = {"api_key": "YOUR_GOOGLE_CUSTOM_SEARCH_API_KEY_HERE"}
-                self.alphavantage = {"api_key": "YOUR_ALPHAVANTAGE_API_KEY_HERE"} # For finance_data_fetcher
+                self.alphavantage_api_key = "YOUR_ALPHAVANTAGE_API_KEY_HERE" # For finance_data_fetcher
+                self.coingecko_api_key = "YOUR_COINGECKO_API_KEY_HERE" # For finance_data_fetcher
+                self.exchangerate_api_key = "YOUR_EXCHANGERATE_API_KEY_HERE" # For finance_data_fetcher
                 self.financial_news = {"api_key": "YOUR_FINANCIAL_NEWS_API_KEY_HERE"} # For finance_apis.yaml example
         st.secrets = MockSecrets()
         logger.info("Mocked st.secrets for standalone testing.")
@@ -57,14 +59,43 @@ def initialize_app_config():
 
 initialize_app_config()
 
-# Get LLM based on configuration
-try:
-    # Get the LLM instance using the centralized utility function
-    # Note: LangChain's create_react_agent often works best with ChatOpenAI for now.
-    # If using other LLMs, ensure they are compatible with LangChain agents.
-    llm = get_llm()
-    if not isinstance(llm, ChatOpenAI):
+# --- Streamlit UI for LLM Configuration ---
+st.sidebar.header("LLM Settings")
+# Get default temperature from config_manager
+default_temperature = config_manager.get('llm.temperature', 0.7)
+llm_temperature = st.sidebar.slider(
+    "LLM Temperature (Creativity vs. Focus)",
+    min_value=0.0,
+    max_value=1.0,
+    value=default_temperature,
+    step=0.05,
+    help="Controls the randomness of the LLM's output. Lower values mean more deterministic, higher values mean more creative."
+)
+
+# Get LLM based on configuration and user's temperature choice
+@st.cache_resource # Cache the LLM resource to avoid re-initializing on every rerun
+def get_llm_cached(temperature: float):
+    """Gets the appropriate LLM instance based on global config and provided temperature."""
+    # Call the centralized get_llm with the user-selected temperature
+    llm_instance = get_llm(override_temperature=temperature)
+    
+    # Ensure it's a ChatOpenAI for agent compatibility if that's the expectation
+    # This check is a safeguard; ideally, the agent's prompt should be LLM-agnostic
+    # or the LLM provider should be explicitly set for agent usage.
+    if not isinstance(llm_instance, ChatOpenAI):
         st.warning("The LangChain ReAct agent often performs best with OpenAI models. Ensure your chosen LLM is compatible.")
+    
+    # Add streaming callbacks if the LLM supports it
+    # Note: Not all LLMs or LangChain integrations support streaming callbacks in the same way.
+    if hasattr(llm_instance, 'streaming'):
+        llm_instance.streaming = True
+    if hasattr(llm_instance, 'callbacks'):
+        llm_instance.callbacks = [StreamingStdOutCallbackHandler()]
+    
+    return llm_instance
+
+try:
+    llm = get_llm_cached(llm_temperature)
 except ValueError as e:
     st.error(e)
     st.stop()
@@ -85,30 +116,32 @@ tools = [
 # Define the agent prompt
 # The prompt guides the agent on how to use its tools and respond.
 template = """
-You are a highly specialized AI assistant focused on finance. Your primary goal is to provide accurate, concise, and helpful information, analysis, and insights related to financial markets, companies, and economic data.
+You are a highly specialized AI assistant focused on finance. Your primary goal is to provide accurate, concise, and helpful information, analysis, and insights related to financial markets, companies, economic data, cryptocurrencies, and currency exchange rates.
 You have access to the following tools:
 
 {tools}
 
 **Instructions for using tools:**
-- **`finance_search_web`**: Use this tool for general financial knowledge, current market news, real-time economic indicators (if not available via `finance_data_fetcher`), or anything that requires up-to-date information from the internet.
+- **`finance_search_web`**: Use this tool for general financial news, current market trends, or anything that requires up-to-date information from the broader internet.
 - **`finance_query_uploaded_docs`**: Use this tool if the user's question seems to refer to specific financial documents or reports that might have been uploaded by them (e.g., "my company's Q4 report", "the investment strategy I uploaded"). Always specify the `user_token` when calling this tool.
 - **`finance_summarize_document_by_path`**: Use this tool if the user explicitly asks you to summarize a document and provides a file path (e.g., "summarize the earnings call transcript at uploads/my_user/finance/transcript.txt").
+- **`finance_data_fetcher`**: This is your primary tool for structured financial data.
+    - **For Stock Data**: Use `api_name="AlphaVantage"` with `data_type` like "stock_prices", "company_overview", "global_quote". Provide `symbol`.
+    - **For Cryptocurrency Data**: Use `api_name="CoinGecko"` with `data_type` like "crypto_price" (requires `ids` and `vs_currencies`), "crypto_list", or "crypto_market_chart" (requires `ids`, `vs_currencies`, `days`).
+    - **For Currency Exchange Rates**: Use `api_name="ExchangeRate-API"` with `data_type` like "exchange_rate_latest" (requires `base_currency`) or "exchange_rate_convert" (requires `base_currency`, `target_currency`, `amount`).
+    - Always specify the `api_name` and `data_type`, and then the relevant parameters for that specific API and data type.
+    - The output will be a JSON string. You will likely need to use `python_interpreter` to parse and analyze this JSON.
 - **`python_interpreter`**: This is a powerful tool. Use it for:
-    - **Data Analysis**: When the user asks for calculations, statistical analysis, or insights from structured data.
-    - **Time-Series Analysis**: For analyzing trends, volatility, or patterns in historical financial data (e.g., stock prices, economic indicators).
-    - **Complex Queries**: When a query requires logical processing, conditional statements, or data manipulation that cannot be directly answered by other tools.
-    - **Parsing JSON**: If `finance_data_fetcher` returns JSON, use `python_interpreter` to parse it (e.g., `import json; data = json.loads(tool_output); print(data[0]['close'])`).
-    - Remember to `import pandas as pd` and other necessary libraries if working with dataframes.
-    - Print your results clearly to stdout so I can see them.
-- **`finance_data_fetcher`**: Use this tool to retrieve specific financial data points or time-series data from financial APIs. Understand its parameters (`data_type`, `symbol`, `start_date`, `end_date`, `limit`).
+    - **Parsing and Analyzing Fetched Data**: After using `finance_data_fetcher`, use this tool to parse the JSON output (e.g., `import json; data = json.loads(tool_output)`) and perform calculations, statistical analysis, time-series analysis (e.g., `import pandas as pd`), or extract specific insights.
+    - **Complex Calculations**: Any query that requires programmatic logic, conditional statements, or data manipulation that cannot be directly answered by other tools.
+    - Print your final results or findings clearly to stdout so I can see them.
 
 **General Guidelines:**
 - Prioritize using the tools to find answers.
 - If a question can be answered by multiple tools, choose the most specific and efficient one.
 - If you cannot find an answer using your tools, state that clearly and politely.
 - When responding, be concise and directly answer the user's question.
-- Cite your sources (e.g., "[From Web Search]", "[From Uploaded Docs]", "[Python Analysis]") when you use a tool to retrieve information or perform analysis.
+- Cite your sources (e.g., "[From Web Search]", "[From Uploaded Docs]", "[Python Analysis]", "[From AlphaVantage]") when you use a tool to retrieve information or perform analysis.
 - Maintain a professional, helpful, and informative tone, suitable for financial contexts.
 
 Begin!
@@ -121,15 +154,13 @@ Question: {input}
 prompt = PromptTemplate.from_template(template)
 
 # Create the agent
-# The `create_react_agent` function creates an agent that uses the ReAct framework.
-# `verbose=True` is useful for debugging to see the agent's thought process.
 agent = create_react_agent(llm, tools, prompt)
 agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="Finance AI Assistant", page_icon="📈", layout="centered")
 st.title("Finance AI Assistant 📈")
-st.markdown("Your dedicated AI for financial insights and analysis! Ask me anything about markets, companies, or economic data, and I'll use my tools to help.")
+st.markdown("Your dedicated AI for financial insights and analysis! Ask me anything about markets, companies, economic data, crypto, or exchange rates, and I'll use my tools to help.")
 
 # Initialize chat history in Streamlit's session state
 if "messages" not in st.session_state:
