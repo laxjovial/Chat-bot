@@ -7,17 +7,11 @@ from typing import List
 from pathlib import Path
 
 from langchain_core.documents import Document
-from langchain_community.document_loaders import (
-    PyPDFLoader,
-    TextLoader,
-    CSVLoader,
-    UnstructuredMarkdownLoader,
-    UnstructuredWordDocumentLoader
-)
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_openai import OpenAIEmbeddings
-from langchain_community.embeddings import HuggingFaceEmbeddings
+
+# Import from the new shared utility file
+from shared_tools.llm_embedding_utils import get_embedder, load_document_file, SUPPORTED_DOC_EXTS
 
 from config.config_manager import config_manager # Use the new ConfigManager instance
 from utils.user_manager import get_user_token # Assuming this is in your utils folder
@@ -26,42 +20,6 @@ from utils.user_manager import get_user_token # Assuming this is in your utils f
 # These paths are now generic and will use the section name
 BASE_UPLOAD_DIR = Path("uploads") # Changed from "sports/uploads"
 BASE_VECTOR_DIR = Path("chroma") # Changed from "sports/chroma"
-SUPPORTED_EXTS = [".pdf", ".txt", ".csv", ".md", ".docx"]
-
-
-# === Embedding Selector ===
-def get_embedder():
-    """Gets the appropriate embedder based on global config."""
-    embedding_mode = config_manager.get('rag.embedding_mode', 'openai')
-    embedding_model = config_manager.get('rag.embedding_model', 'text-embedding-ada-002')
-    
-    if embedding_mode == "openai":
-        openai_api_key = config_manager.get('openai.api_key')
-        if not openai_api_key:
-            raise ValueError("OpenAI API key not found in secrets.toml under [openai] api_key.")
-        return OpenAIEmbeddings(model=embedding_model, openai_api_key=openai_api_key)
-    elif embedding_mode == "huggingface":
-        # For HuggingFace, ensure you have the model downloaded or accessible
-        return HuggingFaceEmbeddings(model_name=embedding_model)
-    else:
-        raise ValueError(f"Unsupported embedding mode: {embedding_mode}")
-
-
-# === File Loader ===
-def load_file(file_path: Path) -> List[Document]:
-    ext = file_path.suffix.lower()
-    if ext == ".pdf":
-        return PyPDFLoader(str(file_path)).load()
-    elif ext == ".txt":
-        return TextLoader(str(file_path)).load()
-    elif ext == ".csv":
-        return CSVLoader(str(file_path)).load()
-    elif ext == ".md":
-        return UnstructuredMarkdownLoader(str(file_path)).load()
-    elif ext == ".docx":
-        return UnstructuredWordDocumentLoader(str(file_path)).load()
-    else:
-        raise ValueError(f"Unsupported file type: {ext}")
 
 
 # === Upload and Vectorize ===
@@ -75,8 +33,8 @@ def process_upload(file, user_token: str, section: str) -> str:
     upload_dir = BASE_UPLOAD_DIR / user_token / section
     upload_dir.mkdir(parents=True, exist_ok=True)
     file_ext = Path(file.name).suffix
-    if file_ext.lower() not in SUPPORTED_EXTS:
-        raise ValueError(f"Unsupported file type: {file_ext}. Supported types are: {', '.join(SUPPORTED_EXTS)}")
+    if file_ext.lower() not in SUPPORTED_DOC_EXTS:
+        raise ValueError(f"Unsupported file type: {file_ext}. Supported types are: {', '.join(SUPPORTED_DOC_EXTS)}")
 
     file_id = str(uuid.uuid4())
     saved_path = upload_dir / f"{file_id}{file_ext}"
@@ -84,7 +42,7 @@ def process_upload(file, user_token: str, section: str) -> str:
         f.write(file.read())
 
     # 2. Load + chunk
-    docs = load_file(saved_path)
+    docs = load_document_file(saved_path)
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150) # Adjusted chunk size for better summaries
     chunks = splitter.split_documents(docs)
 
@@ -134,7 +92,11 @@ def clear_indexed_data(user_token: str, section: str) -> str:
 
 # CLI Test (optional, for direct testing outside Streamlit)
 if __name__ == "__main__":
-    # This requires a minimal data/config.yml and .streamlit/secrets.toml for embeddings
+    import streamlit as st
+    import logging
+    
+    logging.basicConfig(level=logging.INFO)
+
     # Mock Streamlit secrets for local testing if needed
     class MockSecrets:
         def __init__(self):
