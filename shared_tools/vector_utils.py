@@ -7,32 +7,15 @@ from pathlib import Path
 from langchain_community.vectorstores import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
-from langchain_openai import OpenAIEmbeddings
-from langchain_community.embeddings import HuggingFaceEmbeddings
+
+# Import from the new shared utility file
+from shared_tools.llm_embedding_utils import get_embedder
 
 from config.config_manager import config_manager # Use the new ConfigManager instance
 
 # === Base Paths (will be specified per section when used) ===
 # Example: BASE_VECTOR_DIR / user_token / section_name
 BASE_VECTOR_DIR = Path("chroma")
-
-# === Embedding Selector ===
-def get_embedder():
-    """Gets the appropriate embedder based on global config."""
-    embedding_mode = config_manager.get('rag.embedding_mode', 'openai')
-    embedding_model = config_manager.get('rag.embedding_model', 'text-embedding-ada-002')
-    
-    if embedding_mode == "openai":
-        openai_api_key = config_manager.get('openai.api_key')
-        if not openai_api_key:
-            raise ValueError("OpenAI API key not found in secrets.toml under [openai] api_key.")
-        return OpenAIEmbeddings(model=embedding_model, openai_api_key=openai_api_key)
-    elif embedding_mode == "huggingface":
-        # For HuggingFace, ensure you have the model downloaded or accessible
-        return HuggingFaceEmbeddings(model_name=embedding_model)
-    else:
-        raise ValueError(f"Unsupported embedding mode: {embedding_mode}")
-
 
 # === Load & Embed Data from JSON file ===
 def load_docs_from_json_file(json_file_path: Path) -> List[Document]:
@@ -142,21 +125,21 @@ if __name__ == "__main__":
     # Mock the global config_manager instance if it's not already initialized
     try:
         from config.config_manager import ConfigManager
-        if not hasattr(ConfigManager, '_instance') or ConfigManager._instance is None:
-            # Create a dummy config.yml for the ConfigManager to load
-            dummy_data_dir = Path("data")
-            dummy_data_dir.mkdir(exist_ok=True)
-            with open(dummy_data_dir / "config.yml", "w") as f:
-                f.write("rag:\n  embedding_mode: openai\n  embedding_model: text-embedding-ada-002\n")
-            
-            # Initialize config_manager with mocked secrets
-            if not hasattr(st, 'secrets'):
-                st.secrets = MockSecrets()
-                print("Mocked st.secrets for standalone testing.")
-            
-            # Ensure config_manager is a fresh instance for this test run
-            config_manager = ConfigManager()
-            print("ConfigManager initialized for testing.")
+        # Also need a dummy config.yml for embedding mode/model
+        dummy_data_dir = Path("data")
+        dummy_data_dir.mkdir(exist_ok=True)
+        with open(dummy_data_dir / "config.yml", "w") as f:
+            f.write("rag:\n  embedding_mode: openai\n  embedding_model: text-embedding-ada-002\n")
+
+        # Mock st.secrets if not already set
+        if not hasattr(st, 'secrets'):
+            st.secrets = MockSecrets()
+            print("Mocked st.secrets for standalone testing.")
+        
+        # Ensure config_manager is a fresh instance for this test run
+        global config_manager # Declare global to assign
+        config_manager = ConfigManager()
+        print("ConfigManager initialized for testing.")
 
     except Exception as e:
         print(f"Could not initialize ConfigManager for testing: {e}. Skipping LLM-dependent tests.")
@@ -177,7 +160,7 @@ if __name__ == "__main__":
             {"id": 3, "content": "The capital of France is Paris.", "category": "geography"}
         ]
         with open(dummy_json_path, "w", encoding="utf-8") as f:
-            json.dump(dummy_data, f)
+            json.dump(dummy_data)
         print(f"Created dummy JSON file: {dummy_json_path}")
 
         # 2. Load documents from the dummy JSON
