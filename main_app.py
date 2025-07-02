@@ -4,6 +4,7 @@ import streamlit as st
 import os
 import sys
 import logging
+from pathlib import Path
 
 # Ensure the project root is in the Python path
 # This is crucial for imports like 'utils.user_manager' to work correctly
@@ -14,8 +15,9 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 # Import authentication and user management utilities
-from utils.user_manager import get_current_user, logout_user, find_user_by_email, authenticate_user, set_current_user
+from utils.user_manager import get_current_user, logout_user, find_user_by_email, authenticate_user, set_current_user, get_user_tier_capability
 from utils.email_utils import EmailSender # For sending security alerts on login
+from config.config_manager import config_manager # To access tier definitions
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -38,83 +40,95 @@ if "current_page" not in st.session_state:
 # --- Page Routing Dictionary ---
 # Map page names to their corresponding Streamlit app functions
 # We will dynamically import these as needed to avoid circular dependencies and speed up startup
+# Added 'tier_access' property to define minimum tier required to see/access the page.
+# 'admin' means only users with 'admin' role can access.
+# 'all' means no specific tier restriction (public or general user access).
 PAGES = {
-    "Home": "home_page", # A simple welcome page
-    "Login": "login_app",
-    "Register": "register_app",
-    "Forgot Password": "forgot_password_app",
-    "Reset Password (Token)": "reset_password_token_app", # For direct token link
-    "Change Password": "change_password_app",
-    "Lost Access Token": "lost_token_app",
+    "Home": {"module": "home_page", "tier_access": "all"},
+    "Login": {"module": "login_app", "tier_access": "all"},
+    "Register": {"module": "register_app", "tier_access": "all"},
+    "Forgot Password": {"module": "forgot_password_app", "tier_access": "all"},
+    "Reset Password (Token)": {"module": "reset_password_token_app", "tier_access": "all"}, # For direct token link
+    "Change Password": {"module": "change_password_app", "tier_access": "basic"}, # Basic and above can change password
+    "Lost Access Token": {"module": "lost_token_app", "tier_access": "all"},
     # Agent Chat Interfaces
-    "Sports AI Assistant": "sports_chat_agent_app",
-    "Finance AI Assistant": "finance_chat_agent_app",
-    "Entertainment AI Assistant": "entertainment_chat_agent_app",
-    "Medical AI Assistant": "medical_chat_agent_app",
-    "Legal AI Assistant": "legal_chat_agent_app",
-    "Weather AI Assistant": "weather_chat_agent_app",
-    "News AI Assistant": "news_chat_agent_app",
+    "Sports AI Assistant": {"module": "sports_chat_agent_app", "tier_access": "free"}, # Example: Free tier gets Sports
+    "Finance AI Assistant": {"module": "finance_chat_agent_app", "tier_access": "basic"}, # Basic gets Finance
+    "Entertainment AI Assistant": {"module": "entertainment_chat_agent_app", "tier_access": "basic"}, # Basic gets Entertainment
+    "Medical AI Assistant": {"module": "medical_chat_agent_app", "tier_access": "pro"}, # Pro gets Medical
+    "Legal AI Assistant": {"module": "legal_chat_agent_app", "tier_access": "pro"}, # Pro gets Legal
+    "Weather AI Assistant": {"module": "weather_chat_agent_app", "tier_access": "free"}, # Free tier gets Weather
+    "News AI Assistant": {"module": "news_chat_agent_app", "tier_access": "basic"}, # Basic gets News
     # Agent Query Tools
-    "Sports Query Tools": "sports_query_app",
-    "Finance Query Tools": "finance_query_app",
-    "Entertainment Query Tools": "entertainment_query_app",
-    "Medical Query Tools": "medical_query_app",
-    "Legal Query Tools": "legal_query_app",
-    "Weather Query Tools": "weather_query_app",
-    "News Query Tools": "news_query_app",
-    # Agent Vector Management
-    "Upload Sports Docs": "sports_vector_app",
-    "Query Uploaded Sports Docs": "sports_vector_query_app",
-    "Upload Finance Docs": "finance_vector_app",
-    "Query Uploaded Finance Docs": "finance_vector_query_app",
-    "Upload Entertainment Docs": "entertainment_vector_app",
-    "Query Uploaded Entertainment Docs": "entertainment_vector_query_app",
-    "Upload Medical Docs": "medical_vector_app",
-    "Query Uploaded Medical Docs": "medical_vector_query_app",
-    "Upload Legal Docs": "legal_vector_app",
-    "Query Uploaded Legal Docs": "legal_vector_query_app",
-    "Upload Weather Docs": "weather_vector_app",
-    "Query Uploaded Weather Docs": "weather_vector_query_app",
-    "Upload News Docs": "news_vector_app",
-    "Query Uploaded News Docs": "news_vector_query_app",
-    # Admin Pages (placeholder for now)
-    "Admin Dashboard": "admin_dashboard_app" # Will create this later if requested
+    "Sports Query Tools": {"module": "sports_query_app", "tier_access": "free"},
+    "Finance Query Tools": {"module": "finance_query_app", "tier_access": "basic"},
+    "Entertainment Query Tools": {"module": "entertainment_query_app", "tier_access": "basic"},
+    "Medical Query Tools": {"module": "medical_query_app", "tier_access": "pro"},
+    "Legal Query Tools": {"module": "legal_query_app", "tier_access": "pro"},
+    "Weather Query Tools": {"module": "weather_query_app", "tier_access": "free"},
+    "News Query Tools": {"module": "news_query_app", "tier_access": "basic"},
+    # Agent Vector Management (Upload/Query Uploaded Docs)
+    "Upload Sports Docs": {"module": "sports_vector_app", "tier_access": "basic"}, # Uploads start from Basic
+    "Query Uploaded Sports Docs": {"module": "sports_vector_query_app", "tier_access": "basic"},
+    "Upload Finance Docs": {"module": "finance_vector_app", "tier_access": "pro"}, # Finance docs for Pro+
+    "Query Uploaded Finance Docs": {"module": "finance_vector_query_app", "tier_access": "pro"},
+    "Upload Entertainment Docs": {"module": "entertainment_vector_app", "tier_access": "pro"},
+    "Query Uploaded Entertainment Docs": {"module": "entertainment_vector_query_app", "tier_access": "pro"},
+    "Upload Medical Docs": {"module": "medical_vector_app", "tier_access": "elite"}, # Medical docs for Elite+
+    "Query Uploaded Medical Docs": {"module": "medical_vector_query_app", "tier_access": "elite"},
+    "Upload Legal Docs": {"module": "legal_vector_app", "tier_access": "elite"}, # Legal docs for Elite+
+    "Query Uploaded Legal Docs": {"module": "legal_vector_query_app", "tier_access": "elite"},
+    "Upload Weather Docs": {"module": "weather_vector_app", "tier_access": "basic"}, # Weather docs for Basic+
+    "Query Uploaded Weather Docs": {"module": "weather_vector_query_app", "tier_access": "basic"},
+    "Upload News Docs": {"module": "news_vector_app", "tier_access": "pro"}, # News docs for Pro+
+    "Query Uploaded News Docs": {"module": "news_vector_query_app", "tier_access": "pro"},
+    # Admin Pages
+    "Admin Dashboard": {"module": "admin_dashboard_app", "tier_access": "admin"} # Only for 'admin' role
 }
 
-# --- Dynamic Page Loader ---
+# Define tier hierarchy for comparison
+TIER_HIERARCHY = {
+    "free": 0,
+    "basic": 1,
+    "pro": 2,
+    "elite": 3,
+    "premium": 4,
+    "admin": 99 # Admin is highest, separate from regular tiers
+}
+
+def user_can_access_page(user_tier: str, user_roles: List[str], required_tier: str) -> bool:
+    """Checks if a user can access a page based on their tier and roles."""
+    if required_tier == "all":
+        return True
+    if required_tier == "admin":
+        return "admin" in user_roles
+    
+    # For regular tiers, compare based on hierarchy
+    user_level = TIER_HIERARCHY.get(user_tier, -1)
+    required_level = TIER_HIERARCHY.get(required_tier, -1)
+    return user_level >= required_level
+
 def load_page(page_name):
     """Dynamically loads and runs the selected Streamlit app."""
-    module_name = PAGES.get(page_name)
-    if module_name:
-        try:
-            # For apps in 'ui' directory
-            if module_name in ["login_app", "register_app", "forgot_password_app", 
-                               "reset_password_token_app", "change_password_app", "lost_token_app"]:
-                module_path = f"ui.{module_name}"
-            # For agent chat apps
-            elif "chat_agent_app" in module_name:
-                module_path = f"ui.{module_name}"
-            # For agent query apps
-            elif "query_app" in module_name:
-                module_path = f"ui.{module_name}"
-            # For agent vector apps
-            elif "vector_app" in module_name or "vector_query_app" in module_name:
-                module_path = f"ui.{module_name}"
-            # For admin dashboard (future)
-            elif module_name == "admin_dashboard_app":
-                module_path = f"ui.{module_name}"
-            else: # Home page or other simple pages
-                return render_home_page() # Render a simple home page directly
+    page_info = PAGES.get(page_name)
+    if page_info:
+        module_name = page_info["module"]
+        
+        # For home page, render directly
+        if module_name == "home_page":
+            return render_home_page()
 
+        # Determine module path
+        module_path_prefix = "ui." # All UI apps are in the 'ui' directory
+        module_path = f"{module_path_prefix}{module_name}"
+
+        try:
             # Import the module and run its main Streamlit code
-            # Note: Streamlit reruns the entire script, so importing modules this way
-            # means their top-level Streamlit calls will execute.
-            # This is a common pattern but can be optimized for very large apps.
             __import__(module_path)
             logger.info(f"Loaded page: {page_name} from {module_path}")
 
         except ImportError as e:
-            st.error(f"Could not load page '{page_name}'. Module not found: {e}")
+            st.error(f"Could not load page '{page_name}'. Module not found: {e}. Please ensure the file exists and is correctly named.")
             logger.error(f"ImportError for {module_path}: {e}", exc_info=True)
             st.session_state.current_page = "Home" # Fallback
             st.rerun()
@@ -135,17 +149,30 @@ def render_home_page():
     This is your central hub for interacting with various specialized AI agents.
     
     **Choose an agent from the sidebar to get started:**
-    
-    * **Sports Agent 🏆:** Get live scores, player stats, team info, and analyze sports data.
-    * **Finance Agent 📈:** Track stocks, crypto, get market news, and perform financial analysis.
-    * **Entertainment Agent 🎬:** Discover movies, music, series, anime, and get recommendations.
-    * **Medical Agent ⚕️:** Check symptoms, get first aid, health tips, and world health updates.
-    * **Legal Agent ⚖️:** Explore law, constitution, legal terms, and analyze contracts across jurisdictions.
-    * **Weather Agent ☁️:** Get current weather, forecasts, historical data, and climate explanations.
-    * **News Agent 📰:** Stay updated with top headlines, search for news, and track trending stories.
-    
-    Use the navigation in the sidebar to switch between agents and manage your account.
     """)
+    
+    # Dynamically list agents based on user's tier
+    current_user = get_current_user()
+    user_tier = current_user.get('tier', 'free')
+    user_roles = current_user.get('roles', [])
+
+    agent_descriptions = {
+        "Sports AI Assistant": "🏆 Get live scores, player stats, team info, and analyze sports data.",
+        "Finance AI Assistant": "📈 Track stocks, crypto, get market news, and perform financial analysis.",
+        "Entertainment AI Assistant": "🎬 Discover movies, music, series, anime, and get recommendations.",
+        "Medical AI Assistant": "⚕️ Check symptoms, get first aid, health tips, and world health updates.",
+        "Legal AI Assistant": "⚖️ Explore law, constitution, legal terms, and analyze contracts across jurisdictions.",
+        "Weather AI Assistant": "☁️ Get current weather, forecasts, historical data, and climate explanations.",
+        "News AI Assistant": "📰 Stay updated with top headlines, search for news, and track trending stories."
+    }
+
+    for agent_name, description in agent_descriptions.items():
+        if user_can_access_page(user_tier, user_roles, PAGES[agent_name]["tier_access"]):
+            st.markdown(f"* **{agent_name}**: {description}")
+        else:
+            st.markdown(f"* ~~{agent_name}~~ (Upgrade to {PAGES[agent_name]['tier_access'].capitalize()} tier for access)")
+
+    st.markdown("---")
     st.image("https://placehold.co/800x300/ADD8E6/000000?text=Unified+AI+Assistant+Dashboard", 
              caption="Your intelligent companion for every domain.")
 
@@ -156,50 +183,68 @@ with st.sidebar:
     st.title("Navigation")
 
     current_user = get_current_user()
+    user_tier = current_user.get('tier', 'free')
+    user_roles = current_user.get('roles', [])
 
     if current_user:
         st.success(f"Logged in as: **{current_user.get('username', 'User')}** (Tier: {current_user.get('tier', 'N/A')})")
         st.markdown("---")
 
+        # Filter pages based on user's tier and roles
+        available_agent_chat_pages = []
+        available_tool_pages = []
+        available_account_pages = []
+        available_admin_pages = []
+
+        for page_name, page_info in PAGES.items():
+            if user_can_access_page(user_tier, user_roles, page_info["tier_access"]):
+                if "AI Assistant" in page_name and page_name != "Home":
+                    available_agent_chat_pages.append(page_name)
+                elif "Query Tools" in page_name or "Upload" in page_name or "Docs" in page_name:
+                    available_tool_pages.append(page_name)
+                elif page_name in ["Change Password", "Lost Access Token"]:
+                    available_account_pages.append(page_name)
+                elif page_name == "Admin Dashboard":
+                    available_admin_pages.append(page_name)
+        
+        # Sort agent chat pages alphabetically for better UX
+        available_agent_chat_pages.sort()
+        available_tool_pages.sort()
+
         # Agent Selection
         st.subheader("AI Agents")
-        agent_options = [
-            "Sports AI Assistant", "Finance AI Assistant", "Entertainment AI Assistant",
-            "Medical AI Assistant", "Legal AI Assistant", "Weather AI Assistant", "News AI Assistant"
-        ]
-        selected_agent = st.radio("Choose an Agent:", agent_options, key="agent_radio")
-        if selected_agent and st.session_state.current_page != selected_agent:
-            st.session_state.current_page = selected_agent
-            st.rerun()
+        if available_agent_chat_pages:
+            selected_agent = st.radio("Choose an Agent:", available_agent_chat_pages, key="agent_radio")
+            if selected_agent and st.session_state.current_page != selected_agent:
+                st.session_state.current_page = selected_agent
+                st.rerun()
+        else:
+            st.info("No agents available for your tier. Upgrade to unlock more!")
+
 
         st.markdown("---")
         st.subheader("Agent Tools & Data")
-        tool_options = [
-            "Sports Query Tools", "Upload Sports Docs", "Query Uploaded Sports Docs",
-            "Finance Query Tools", "Upload Finance Docs", "Query Uploaded Finance Docs",
-            "Entertainment Query Tools", "Upload Entertainment Docs", "Query Uploaded Entertainment Docs",
-            "Medical Query Tools", "Upload Medical Docs", "Query Uploaded Medical Docs",
-            "Legal Query Tools", "Upload Legal Docs", "Query Uploaded Legal Docs",
-            "Weather Query Tools", "Upload Weather Docs", "Query Uploaded Weather Docs",
-            "News Query Tools", "Upload News Docs", "Query Uploaded News Docs"
-        ]
-        selected_tool = st.radio("Manage Tools & Data:", tool_options, key="tool_radio")
-        if selected_tool and st.session_state.current_page != selected_tool:
-            st.session_state.current_page = selected_tool
-            st.rerun()
+        if available_tool_pages:
+            selected_tool = st.radio("Manage Tools & Data:", available_tool_pages, key="tool_radio")
+            if selected_tool and st.session_state.current_page != selected_tool:
+                st.session_state.current_page = selected_tool
+                st.rerun()
+        else:
+            st.info("No tools or data management options available for your tier. Upgrade to unlock!")
+
 
         st.markdown("---")
         st.subheader("Account Management")
-        account_options = [
-            "Change Password", "Lost Access Token"
-        ]
-        selected_account_option = st.radio("Account Options:", account_options, key="account_radio")
-        if selected_account_option and st.session_state.current_page != selected_account_option:
-            st.session_state.current_page = selected_account_option
-            st.rerun()
+        if available_account_pages:
+            selected_account_option = st.radio("Account Options:", available_account_pages, key="account_radio")
+            if selected_account_option and st.session_state.current_page != selected_account_option:
+                st.session_state.current_page = selected_account_option
+                st.rerun()
+        else:
+            st.info("No account options available.")
         
-        # Admin Dashboard access (only for 'admin' tier)
-        if current_user.get('tier') == 'admin' or 'admin' in current_user.get('roles', []):
+        # Admin Dashboard access (only for 'admin' role)
+        if available_admin_pages: # This list will only contain "Admin Dashboard" if user is admin
             st.markdown("---")
             st.subheader("Admin Functions")
             if st.button("📊 Admin Dashboard", use_container_width=True):
@@ -214,7 +259,7 @@ with st.sidebar:
 
     else:
         st.subheader("Authentication")
-        auth_options = ["Login", "Register", "Forgot Password"]
+        auth_options = ["Login", "Register", "Forgot Password", "Lost Access Token"] # Lost token is also public
         selected_auth = st.radio("Choose an option:", auth_options, key="auth_radio")
         if selected_auth and st.session_state.current_page != selected_auth:
             st.session_state.current_page = selected_auth
@@ -224,9 +269,19 @@ with st.sidebar:
 st.markdown("---") # Separator for main content
 
 # If user is not logged in and not on a public auth page, redirect to Login
-if not current_user and st.session_state.current_page not in ["Login", "Register", "Forgot Password", "Reset Password (Token)"]:
+public_pages = ["Login", "Register", "Forgot Password", "Reset Password (Token)", "Lost Access Token", "Home"]
+if not current_user and st.session_state.current_page not in public_pages:
     st.session_state.current_page = "Login"
     st.rerun()
+
+# If user is logged in, but tries to access a page they don't have access to (e.g., direct URL manipulation)
+if current_user and st.session_state.current_page not in public_pages: # Exclude public pages from this check
+    page_info = PAGES.get(st.session_state.current_page)
+    if page_info and not user_can_access_page(user_tier, user_roles, page_info["tier_access"]):
+        st.error(f"🚫 Access Denied: Your current tier ({user_tier.capitalize()}) does not have access to the '{st.session_state.current_page}' feature. Please upgrade your plan.")
+        st.session_state.current_page = "Home" # Redirect to home or a "upgrade" page
+        st.rerun()
+
 
 # Render the selected page
 load_page(st.session_state.current_page)
