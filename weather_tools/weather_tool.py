@@ -16,8 +16,9 @@ from shared_tools.import_utils import process_upload, clear_indexed_data # Used 
 from shared_tools.export_utils import export_response, export_vector_results # To be used internally by other tools, or for direct exports
 from shared_tools.vector_utils import build_vectorstore, load_docs_from_json_file, BASE_VECTOR_DIR # For testing and potential future direct use
 
-# Import Python REPL for data analysis capabilities
-from langchain_community.tools.python.tool import PythonREPLTool
+# REMOVED: from langchain_community.tools.python.tool import PythonREPLTool
+# The Python interpreter is now managed and imported via shared_tools/python_interpreter_tool.py
+# and conditionally added to the agent's toolset in the *_chat_agent_app.py files.
 
 # Import config_manager to access API configurations
 from config.config_manager import config_manager
@@ -31,11 +32,11 @@ logger = logging.getLogger(__name__)
 @tool
 def weather_search_web(query: str, user_token: str = DEFAULT_USER_TOKEN, max_chars: int = 2000) -> str:
     """
-    Searches the web for general weather or climate-related information using a smart search fallback mechanism.
+    Searches the web for weather-related information (forecasts, current conditions, climate data) using a smart search fallback mechanism.
     This tool wraps the generic `scrape_web` tool, providing a weather-specific interface.
     
     Args:
-        query (str): The weather/climate-related search query (e.g., "impact of El Nino", "how do hurricanes form").
+        query (str): The weather-related search query (e.g., "weather in London tomorrow", "hurricane season outlook").
         user_token (str): The unique identifier for the user. Defaults to "default".
         max_chars (int): Maximum characters for the returned snippet. Defaults to 2000.
     
@@ -48,11 +49,11 @@ def weather_search_web(query: str, user_token: str = DEFAULT_USER_TOKEN, max_cha
 @tool
 def weather_query_uploaded_docs(query: str, user_token: str = DEFAULT_USER_TOKEN, export: Optional[bool] = False, k: int = 5) -> str:
     """
-    Queries previously uploaded and indexed weather/climate documents for a user using vector similarity search.
+    Queries previously uploaded and indexed weather documents for a user using vector similarity search.
     This tool wraps the generic `QueryUploadedDocs` tool, fixing the section to "weather".
     
     Args:
-        query (str): The search query to find relevant weather/climate documents (e.g., "summary of the IPCC report I uploaded", "my local weather station data analysis").
+        query (str): The search query to find relevant weather documents (e.g., "historical rainfall data for California", "climate change reports").
         user_token (str): The unique identifier for the user. Defaults to "default".
         export (bool): If True, the results will be saved to a file in markdown format. Defaults to False.
         k (int): The number of top relevant documents to retrieve. Defaults to 5.
@@ -67,13 +68,13 @@ def weather_query_uploaded_docs(query: str, user_token: str = DEFAULT_USER_TOKEN
 @tool
 def weather_summarize_document_by_path(file_path_str: str) -> str:
     """
-    Summarizes a document related to weather or climate topics located at the given file path.
+    Summarizes a document related to weather located at the given file path.
     The file path should be accessible by the system (e.g., in the 'uploads' directory).
     This tool wraps the generic `summarize_document` tool.
     
     Args:
         file_path_str (str): The full path to the document file to be summarized.
-                              Example: "uploads/default/weather/climate_study.pdf"
+                              Example: "uploads/default/weather/annual_climate_report.pdf"
     
     Returns:
         str: A concise summary of the document content.
@@ -85,7 +86,7 @@ def weather_summarize_document_by_path(file_path_str: str) -> str:
         return f"Error: Document not found at '{file_path_str}'."
     
     try:
-        summary = summarize_document(file_path)
+        summary = summarize_document(file_path) # Assuming summarize_document can take Path object
         return f"Summary of '{file_path.name}':\n{summary}"
     except ValueError as e:
         logger.error(f"Error summarizing document '{file_path_str}': {e}")
@@ -96,24 +97,9 @@ def weather_summarize_document_by_path(file_path_str: str) -> str:
 
 # === Advanced Weather Tools ===
 
-# Initialize the Python REPL tool.
-python_repl = PythonREPLTool()
-python_repl.name = "python_interpreter"
-python_repl.description = """
-Executes Python code. Use this for complex data analysis, calculations, or any task that requires programmatic logic
-on structured weather or climate data (e.g., analyzing temperature trends, precipitation patterns).
-Input should be a valid Python code string.
-The output will be the result of the code execution (stdout/stderr).
-You have access to common libraries like pandas, numpy, matplotlib, datetime, json, etc.
-Example:
-Action: python_interpreter
-Action Input:
-import json
-import pandas as pd
-data = json.loads(tool_output) # Assuming tool_output from weather_data_fetcher
-df = pd.DataFrame(data['daily'])
-print(df[['date', 'temp_max', 'temp_min']].head())
-"""
+# REMOVED: Direct import and initialization of PythonREPLTool.
+# The python_interpreter_with_rbac tool is now imported and added conditionally
+# in the *_chat_agent_app.py files based on RBAC.
 
 # Helper to load API configs
 def _load_weather_apis() -> Dict[str, Any]:
@@ -134,34 +120,38 @@ WEATHER_APIS_CONFIG = _load_weather_apis()
 
 @tool
 def weather_data_fetcher(
-    api_name: str,
-    data_type: str, # e.g., "current_weather", "forecast", "historical_weather", "alerts"
-    location: Optional[str] = None, # City name, zip code, or lat/lon (e.g., "London", "90210", "34.05,-118.25")
-    days: Optional[int] = None, # For forecast (e.g., 5-day forecast)
-    start_date: Optional[str] = None, # YYYY-MM-DD for historical data
-    end_date: Optional[str] = None, # YYYY-MM-DD for historical data
-    units: Optional[str] = "metric" # "metric" or "imperial"
+    api_name: str, 
+    data_type: str, 
+    location: Optional[str] = None, # City name, zip code, or lat/lon
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    date: Optional[str] = None, # YYYY-MM-DD for historical or specific day forecast
+    days: Optional[int] = None, # Number of days for forecast
+    unit: Optional[str] = "metric", # "metric" or "imperial"
+    limit: Optional[int] = None # For lists of data, e.g., hourly forecasts
 ) -> str:
     """
-    Fetches weather data (current, forecast, historical, alerts) from configured APIs.
-    This is a placeholder and needs actual implementation to connect to real weather APIs
-    like OpenWeatherMap, WeatherAPI.com, AccuWeather, etc.
+    Fetches weather data from configured APIs (e.g., OpenWeatherMap, WeatherAPI).
     
     Args:
         api_name (str): The name of the API to use (e.g., "OpenWeatherMap", "WeatherAPI").
                         This must match a 'name' field in data/weather_apis.yaml.
-        data_type (str): The type of weather data to fetch (e.g., "current_weather", "forecast", "historical_weather", "alerts").
-        location (str, optional): The city name, zip code, or latitude/longitude for the weather query.
-        days (int, optional): Number of days for the forecast (e.g., 1, 3, 5, 7).
-        start_date (str, optional): Start date for historical weather data (YYYY-MM-DD).
-        end_date (str, optional): End date for historical weather data (YYYY-MM-DD).
-        units (str, optional): Units for temperature (e.g., "metric" for Celsius, "imperial" for Fahrenheit). Defaults to "metric".
+        data_type (str): The type of data to fetch.
+                          - For OpenWeatherMap: "current_weather", "forecast_daily", "forecast_hourly".
+                          - For WeatherAPI: "current_weather", "forecast", "history".
+        location (str, optional): City name, zip code, or IP address.
+        latitude (float, optional): Latitude for coordinates-based queries.
+        longitude (float, optional): Longitude for coordinates-based queries.
+        date (str, optional): Date for historical or specific day forecast (YYYY-MM-DD).
+        days (int, optional): Number of days for forecast (e.g., 3, 7, 10).
+        unit (str, optional): Units for temperature ("metric" for Celsius, "imperial" for Fahrenheit). Defaults to "metric".
+        limit (int, optional): Maximum number of records to return (e.g., for hourly forecasts).
         
     Returns:
-        str: A JSON string of the fetched weather data or an error message.
-             The agent can then use `python_interpreter` to parse and analyze this JSON.
+        str: A JSON string of the fetched data or an error message.
+             The agent can then use `python_interpreter_with_rbac` to parse and analyze this JSON.
     """
-    logger.info(f"Tool: weather_data_fetcher called for API: {api_name}, data_type: {data_type}, location: '{location}'")
+    logger.info(f"Tool: weather_data_fetcher called for API: {api_name}, data_type: {data_type}, location: {location}, lat: {latitude}, lon: {longitude}")
 
     api_info = WEATHER_APIS_CONFIG.get(api_name)
     if not api_info:
@@ -179,77 +169,91 @@ def weather_data_fetcher(
         secret_key_path = api_key_value_ref.split("load_from_secrets.")[1]
         api_key = config_manager.get_secret(secret_key_path)
     
-    if key_name and api_key:
-        if key_name.lower() == "authorization": # Handle Bearer tokens
-            headers["Authorization"] = f"Bearer {api_key}"
-        else:
-            default_params[key_name] = api_key
-    elif key_name and not api_key:
+    if key_name and not api_key:
         logger.warning(f"API key for '{api_name}' not found in secrets.toml. Proceeding without key if API allows.")
 
     params = {**default_params} # Start with default parameters
-    url = endpoint
+    if api_key and key_name:
+        params[key_name] = api_key
+    
+    url = endpoint # Base URL, might be modified
 
     try:
-        # --- Placeholder/Mock Implementations ---
+        # Determine location parameter based on availability
+        if location:
+            params['q'] = location # Common for many weather APIs
+        elif latitude is not None and longitude is not None:
+            params['lat'] = latitude
+            params['lon'] = longitude
+            params['q'] = f"{latitude},{longitude}" # Some APIs prefer combined q for lat/lon
+
+        # Add units
         if api_name == "OpenWeatherMap":
-            if not location: return "Error: 'location' is required for OpenWeatherMap."
+            params['units'] = unit # OpenWeatherMap uses 'units'
+        elif api_name == "WeatherAPI":
+            if unit == "metric":
+                params['aqi'] = "no" # WeatherAPI doesn't have a direct 'unit' param for all, uses 'aqi' for example
+            elif unit == "imperial":
+                params['aqi'] = "no" # Example, might need more specific handling
+
+        # --- OpenWeatherMap ---
+        if api_name == "OpenWeatherMap":
+            if not api_key: return "Error: API key is required for OpenWeatherMap."
+            if not (location or (latitude is not None and longitude is not None)):
+                return "Error: 'location' or 'latitude' and 'longitude' are required for OpenWeatherMap."
+
             if data_type == "current_weather":
-                # Mock current weather data
-                return json.dumps({
-                    "location": location,
-                    "temperature": "25°C" if units == "metric" else "77°F",
-                    "conditions": "Partly Cloudy",
-                    "humidity": "60%",
-                    "wind_speed": "10 km/h" if units == "metric" else "6 mph",
-                    "timestamp": "2024-07-02 10:00:00"
-                })
-            elif data_type == "forecast":
-                if not days: return "Error: 'days' is required for OpenWeatherMap forecast."
-                # Mock forecast data
-                return json.dumps({
-                    "location": location,
-                    "forecast": [
-                        {"date": "2024-07-02", "temp_max": "28°C", "temp_min": "18°C", "conditions": "Sunny"},
-                        {"date": "2024-07-03", "temp_max": "26°C", "temp_min": "17°C", "conditions": "Cloudy with chance of rain"},
-                        {"date": "2024-07-04", "temp_max": "29°C", "temp_min": "19°C", "conditions": "Clear"}
-                    ][:days]
-                })
-            elif data_type == "alerts":
-                # Mock weather alerts
-                return json.dumps([
-                    {"type": "Severe Thunderstorm Warning", "area": location, "expires": "2024-07-02 18:00:00", "description": "Strong winds and heavy rain expected."}
-                ])
+                url = f"{endpoint}{api_info['functions']['CURRENT_WEATHER']['path']}"
+            elif data_type == "forecast_daily":
+                url = f"{endpoint}{api_info['functions']['FORECAST_DAILY']['path']}"
+                if days: params['cnt'] = days # Number of days for daily forecast
+            elif data_type == "forecast_hourly":
+                url = f"{endpoint}{api_info['functions']['FORECAST_HOURLY']['path']}"
+                if days: params['cnt'] = days * 24 # For hourly, count is hours, so days * 24
             else:
                 return f"Error: Unsupported data_type '{data_type}' for OpenWeatherMap."
-        
+            
+            response = requests.get(url, headers=headers, params=params, timeout=request_timeout)
+
+        # --- WeatherAPI.com ---
         elif api_name == "WeatherAPI":
-            if not location: return "Error: 'location' is required for WeatherAPI."
+            if not api_key: return "Error: API key is required for WeatherAPI.com."
+            if not (location or (latitude is not None and longitude is not None)):
+                return "Error: 'location' or 'latitude' and 'longitude' are required for WeatherAPI.com."
+
             if data_type == "current_weather":
-                # Mock current weather data
-                return json.dumps({
-                    "location": location,
-                    "temp_c": 26.0, "temp_f": 78.8,
-                    "condition": "Sunny",
-                    "humidity": 55,
-                    "wind_kph": 12.0, "wind_mph": 7.5,
-                    "last_updated": "2024-07-02 10:05"
-                })
-            elif data_type == "historical_weather":
-                if not start_date or not end_date: return "Error: 'start_date' and 'end_date' are required for historical weather."
-                # Mock historical data
-                return json.dumps({
-                    "location": location,
-                    "history": [
-                        {"date": "2024-06-30", "avg_temp_c": 24.5, "avg_temp_f": 76.1, "condition": "Sunny"},
-                        {"date": "2024-06-29", "avg_temp_c": 23.0, "avg_temp_f": 73.4, "condition": "Partly cloudy"}
-                    ]
-                })
+                url = f"{endpoint}{api_info['functions']['CURRENT_WEATHER']['path']}"
+            elif data_type == "forecast":
+                url = f"{endpoint}{api_info['functions']['FORECAST']['path']}"
+                if days: params['days'] = days
+            elif data_type == "history":
+                url = f"{endpoint}{api_info['functions']['HISTORY']['path']}"
+                if not date: return "Error: 'date' is required for WeatherAPI.com 'history' data_type."
+                params['dt'] = date # WeatherAPI uses 'dt' for date
             else:
-                return f"Error: Unsupported data_type '{data_type}' for WeatherAPI."
+                return f"Error: Unsupported data_type '{data_type}' for WeatherAPI.com."
+            
+            response = requests.get(url, headers=headers, params=params, timeout=request_timeout)
 
         else:
             return f"Error: API '{api_name}' is not supported by weather_data_fetcher."
+
+        response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
+        data = response.json()
+        
+        # Apply limit if specified and data is a list (or has a list-like key)
+        if limit and isinstance(data, dict):
+            # Common keys for lists in weather APIs (e.g., hourly forecast)
+            for key in ['hourly', 'daily', 'list', 'forecastday']:
+                if key in data and isinstance(data[key], list):
+                    data[key] = data[key][:limit]
+                    break
+            if 'forecast' in data and 'forecastday' in data['forecast'] and isinstance(data['forecast']['forecastday'], list):
+                data['forecast']['forecastday'] = data['forecast']['forecastday'][:limit]
+        elif limit and isinstance(data, list):
+            data = data[:limit]
+
+        return json.dumps(data, ensure_ascii=False, indent=2)
 
     except requests.exceptions.RequestException as req_e:
         logger.error(f"API request failed for {api_name} ({data_type}): {req_e}")
@@ -261,46 +265,6 @@ def weather_data_fetcher(
         logger.error(f"Error processing {api_name} response or request setup: {e}", exc_info=True)
         return f"An unexpected error occurred: {e}"
 
-@tool
-def climate_info_explainer(topic: str) -> str:
-    """
-    Explains complex climate phenomena, terms, or impacts in understandable language.
-    
-    Args:
-        topic (str): The climate topic to explain (e.g., "El Nino", "Greenhouse Effect", "Carbon Sequestration", "Arctic Amplification").
-        
-    Returns:
-        str: A simplified explanation of the climate topic.
-    """
-    logger.info(f"Tool: climate_info_explainer called for topic: '{topic}'")
-    topic_lower = topic.lower()
-    if "el nino" in topic_lower:
-        return "**El Niño:** A climate pattern that describes the unusual warming of surface waters in the eastern tropical Pacific Ocean. El Niño is the 'warm phase' of a larger phenomenon called El Niño-Southern Oscillation (ENSO). It can lead to significant changes in global weather patterns, affecting rainfall, temperature, and storm activity worldwide."
-    elif "greenhouse effect" in topic_lower:
-        return "**Greenhouse Effect:** The process by which radiation from a planet's atmosphere warms the planet's surface to a temperature above what it would be without its atmosphere. Greenhouse gases (like carbon dioxide, methane, and water vapor) trap heat, preventing it from escaping into space and keeping the Earth warm enough to sustain life. Human activities have increased these gases, leading to enhanced warming."
-    elif "carbon sequestration" in topic_lower:
-        return "**Carbon Sequestration:** The process of capturing and storing atmospheric carbon dioxide. It is one method of reducing the amount of carbon dioxide in the atmosphere with the goal of reducing global climate change. This can occur naturally (e.g., forests absorbing CO2) or artificially (e.g., capturing emissions from power plants and injecting them underground)."
-    elif "arctic amplification" in topic_lower:
-        return "**Arctic Amplification:** The phenomenon where the Arctic region is warming at a rate significantly faster than the rest of the planet. This is largely due to positive feedback loops, such as the melting of ice and snow which reduces the Earth's albedo (reflectivity), causing more solar radiation to be absorbed and further warming the region."
-    else:
-        return f"I can explain various climate topics. Please provide a specific climate phenomenon or term for explanation."
-
-
-@tool
-def weather_alert_checker(location: str) -> str:
-    """
-    Checks for any active severe weather alerts for a specified location.
-    
-    Args:
-        location (str): The location to check for alerts (e.g., "New York City", "London").
-        
-    Returns:
-        str: A summary of active alerts or a message indicating no alerts.
-    """
-    logger.info(f"Tool: weather_alert_checker called for location: '{location}'")
-    # This calls the weather_data_fetcher with a specific data_type for alerts
-    return weather_data_fetcher(api_name="OpenWeatherMap", data_type="alerts", location=location)
-
 
 # CLI Test (optional)
 if __name__ == "__main__":
@@ -309,6 +273,9 @@ if __name__ == "__main__":
     import os
     from config.config_manager import ConfigManager # Import ConfigManager for testing setup
     from shared_tools.llm_embedding_utils import get_llm # For testing summarization with a real LLM
+    # Import the RBAC-enabled Python interpreter tool for testing purposes here
+    from shared_tools.python_interpreter_tool import python_interpreter_with_rbac
+    from unittest.mock import MagicMock
 
     logging.basicConfig(level=logging.INFO)
 
@@ -321,68 +288,145 @@ if __name__ == "__main__":
             self.serpapi = {"api_key": "YOUR_SERPAPI_KEY"} # For scrape_web testing
             self.google_custom_search = {"api_key": "YOUR_GOOGLE_CUSTOM_SEARCH_API_KEY"} # For scrape_web testing
             self.openweathermap_api_key = "YOUR_OPENWEATHERMAP_API_KEY" # For OpenWeatherMap
-            self.weatherapi_api_key = "YOUR_WEATHERAPI_API_KEY" # For WeatherAPI.com
+            self.weatherapi_api_key = "YOUR_WEATHERAPI_API_KEY" # For WeatherAPI
+            # Mock user tokens for testing RBAC
+            self.user_tokens = {
+                "free_user_token": "mock_free_token",
+                "pro_user_token": "mock_pro_token",
+                "admin_user_token": "mock_admin_token"
+            }
 
-    try:
-        # Create dummy config.yml
-        dummy_data_dir = Path("data")
-        dummy_data_dir.mkdir(exist_ok=True)
-        dummy_config_path = dummy_data_dir / "config.yml"
-        with open(dummy_config_path, "w") as f:
-            f.write("""
-llm:
-  provider: openai
-  model: gpt-3.5-turbo
-  temperature: 0.5
-rag:
-  chunk_size: 500
-  chunk_overlap: 50
-web_scraping:
-  user_agent: Mozilla/5.0 (Test; Python)
-  timeout_seconds: 5
-""")
-        # Create dummy API YAMLs for scraper_tool and weather_data_fetcher
-        dummy_sports_apis_path = dummy_data_dir / "sports_apis.yaml"
-        with open(dummy_sports_apis_path, "w") as f:
-            f.write("""
-search_apis:
-  - name: "SerpAPI"
-    type: "search"
-    endpoint: "https://serpapi.com/search"
-    key_name: "api_key"
-    key_value: "load_from_secrets.serpapi_api_key"
-    query_param: "q"
-    default_params:
-      engine: "google"
-      num: 3
-            """)
-        dummy_media_apis_path = dummy_data_dir / "media_apis.yaml"
-        with open(dummy_media_apis_path, "w") as f:
-            f.write("""
-apis: []
-search_apis: []
-""")
-        dummy_finance_apis_path = dummy_data_dir / "finance_apis.yaml"
-        with open(dummy_finance_apis_path, "w") as f:
-            f.write("""
-apis: []
-search_apis: []
-""")
-        dummy_medical_apis_path = dummy_data_dir / "medical_apis.yaml"
-        with open(dummy_medical_apis_path, "w") as f:
-            f.write("""
-apis: []
-search_apis: []
-""")
-        dummy_legal_apis_path = dummy_data_dir / "legal_apis.yaml"
-        with open(dummy_legal_apis_path, "w") as f:
-            f.write("""
-apis: []
-search_apis: []
-""")
-        dummy_weather_apis_path = dummy_data_dir / "weather_apis.yaml"
-        with open(dummy_weather_apis_path, "w") as f:
-            f.write("""
+        def get(self, key, default=None):
+            parts = key.split('.')
+            val = self
+            for part in parts:
+                if hasattr(val, part):
+                    val = getattr(val, part)
+                elif isinstance(val, dict) and part in val:
+                    val = val[part]
+                else:
+                    return default
+            return val
+
+    # Mock user_manager.find_user_by_token and get_user_tier_capability for testing RBAC
+    class MockUserManager:
+        _mock_users = {
+            "mock_free_token": {"username": "FreeUser", "email": "free@example.com", "tier": "free", "roles": ["user"]},
+            "mock_pro_token": {"username": "ProUser", "email": "pro@example.com", "tier": "pro", "roles": ["user"]},
+            "mock_admin_token": {"username": "AdminUser", "email": "admin@example.com", "tier": "admin", "roles": ["user", "admin"]},
+            "nonexistent_token": None
+        }
+        def find_user_by_token(self, token: str) -> Optional[Dict[str, Any]]:
+            return self._mock_users.get(token)
+
+        def get_user_tier_capability(self, user_token: Optional[str], capability_key: str, default_value: Any = None) -> Any:
+            user = self.find_user_by_token(user_token)
+            user_tier = user.get('tier', 'free') if user else 'free'
+            user_roles = user.get('roles', []) if user else []
+
+            if 'admin' in user_roles:
+                if isinstance(default_value, bool): return True
+                if isinstance(default_value, (int, float)): return float('inf')
+                return default_value
+            
+            mock_tier_configs = {
+                "free": {
+                    "data_analysis_enabled": False,
+                    "web_search_limit_chars": 500,
+                    "web_search_max_results": 2
+                },
+                "pro": {
+                    "data_analysis_enabled": True,
+                    "web_search_limit_chars": 3000,
+                    "web_search_max_results": 7
+                },
+                "elite": {
+                    "data_analysis_enabled": True,
+                    "web_search_limit_chars": 5000,
+                    "web_search_max_results": 10
+                },
+                "premium": {
+                    "data_analysis_enabled": True,
+                    "web_search_limit_chars": 10000,
+                    "web_search_max_results": 15
+                }
+            }
+            tier_config = mock_tier_configs.get(user_tier, {})
+            return tier_config.get(capability_key, default_value)
+
+    # Patch the actual imports for testing
+    import sys
+    sys.modules['utils.user_manager'] = MockUserManager()
+    # Mock config_manager to return the test config
+    class MockConfigManager:
+        _instance = None
+        _is_loaded = False
+        def __init__(self):
+            if MockConfigManager._instance is not None:
+                raise Exception("ConfigManager is a singleton. Use get_instance().")
+            MockConfigManager._instance = self
+            self._config_data = {
+                'llm': {
+                    'max_summary_input_chars': 10000 # Default for LLM section
+                },
+                'rag': {
+                    'chunk_size': 500,
+                    'chunk_overlap': 50,
+                    'max_query_results_k': 10
+                },
+                'web_scraping': {
+                    'user_agent': 'Mozilla/5.0 (Test; Python)',
+                    'timeout_seconds': 5,
+                    'max_search_results': 5 # Default for config
+                },
+                'tiers': { # These are just for the mock, actual tiers are in the user_manager mock
+                    'free': {}, 'basic': {}, 'pro': {}, 'elite': {}, 'premium': {}
+                }
+            }
+            self._is_loaded = True
+        
+        def get(self, key, default=None):
+            parts = key.split('.')
+            val = self._config_data
+            for part in parts:
+                if isinstance(val, dict) and part in val:
+                    val = val[part]
+                else:
+                    return default
+            return val
+        
+        def get_secret(self, key, default=None):
+            return st.secrets.get(key, default)
+
+    # Replace the actual config_manager with the mock
+    sys.modules['config.config_manager'].config_manager = MockConfigManager()
+    sys.modules['config.config_manager'].ConfigManager = MockConfigManager # Also replace the class for singleton check
+
+    if not hasattr(st, 'secrets'):
+        st.secrets = MockSecrets()
+        print("Mocked st.secrets for standalone testing.")
+    
+    # Mock LLM for summarization
+    class MockLLM:
+        def invoke(self, prompt: str) -> MagicMock:
+            mock_content = f"Mock summary of the provided text. Original content length: {len(prompt.split('Document Content:')[1].strip())} characters."
+            mock_message = MagicMock()
+            mock_message.content = mock_content
+            return mock_message
+    
+    import shared_tools.llm_embedding_utils
+    shared_tools.llm_embedding_utils.get_llm = lambda: MockLLM()
+
+
+    print("\n--- Testing weather_tool functions (updated) ---")
+    test_user = "test_user_weather"
+    
+    # Setup dummy API YAMLs for testing
+    dummy_data_dir = Path("data")
+    dummy_data_dir.mkdir(exist_ok=True)
+    dummy_weather_apis_path = dummy_data_dir / "weather_apis.yaml"
+    with open(dummy_weather_apis_path, "w") as f:
+        f.write("""
 apis:
   - name: "OpenWeatherMap"
     type: "weather"
@@ -392,10 +436,16 @@ apis:
     headers: {}
     default_params: {}
     functions:
-      current_weather: {path: "weather"}
-      forecast: {path: "forecast"}
-      alerts: {path: "onecall"} # OneCall API for alerts, requires lat/lon
-    query_param: "q" # For city name
+      CURRENT_WEATHER:
+        path: "weather"
+        params: {q: "", lat: "", lon: "", units: "metric"}
+      FORECAST_DAILY:
+        path: "forecast/daily" # Not directly supported by OpenWeatherMap free tier, but common concept
+        params: {q: "", lat: "", lon: "", cnt: "7", units: "metric"}
+      FORECAST_HOURLY:
+        path: "forecast" # 5 day / 3 hour forecast
+        params: {q: "", lat: "", lon: "", cnt: "40", units: "metric"}
+    query_param: "q"
 
   - name: "WeatherAPI"
     type: "weather"
@@ -405,120 +455,96 @@ apis:
     headers: {}
     default_params: {}
     functions:
-      current_weather: {path: "current.json"}
-      forecast: {path: "forecast.json"}
-      historical_weather: {path: "history.json"}
-    query_param: "q" # For city name
+      CURRENT_WEATHER:
+        path: "current.json"
+        params: {q: "", aqi: "no"}
+      FORECAST:
+        path: "forecast.json"
+        params: {q: "", days: "7", aqi: "no", alerts: "no"}
+      HISTORY:
+        path: "history.json"
+        params: {q: "", dt: ""}
+    query_param: "q"
 """)
+    # Re-load config after creating dummy file
+    sys.modules['config.config_manager'].config_manager = MockConfigManager()
+    sys.modules['config.config_manager'].ConfigManager = MockConfigManager # Also replace the class for singleton check
+    global WEATHER_APIS_CONFIG
+    WEATHER_APIS_CONFIG = _load_weather_apis()
+    print("Dummy weather_apis.yaml created and config reloaded for testing.")
 
-        if not hasattr(st, 'secrets'):
-            st.secrets = MockSecrets()
-            print("Mocked st.secrets for standalone testing.")
-        
-        # Ensure config_manager is a fresh instance for this test run
-        ConfigManager._instance = None # Reset the singleton
-        ConfigManager._is_loaded = False
-        config_manager = ConfigManager()
-        print("ConfigManager initialized for testing.")
 
-    except Exception as e:
-        print(f"Could not initialize ConfigManager for testing: {e}. Skipping API/LLM-dependent tests.")
-        config_manager = None
-
-    print("\n--- Testing weather_tool functions ---")
-    test_user = "test_user_weather"
-    
     if config_manager:
-        # Test weather_search_web
+        # Test weather_search_web (already works, just for completeness)
         print("\n--- Testing weather_search_web ---")
-        search_query = "effects of climate change on sea levels"
+        search_query = "weather in New York"
         search_result = weather_search_web(search_query, user_token=test_user)
         print(f"Search Result for '{search_query}':\n{search_result[:500]}...")
 
-        # Prepare dummy data for weather_query_uploaded_docs
-        print("\n--- Preparing dummy data for weather_query_uploaded_docs ---")
-        dummy_json_path = Path("temp_weather_docs.json")
-        dummy_data = [
-            {"id": 1, "text": "Summary of the latest climate model predictions for global temperature rise.", "category": "climate_models"},
-            {"id": 2, "text": "Notes on local weather patterns in my region over the past decade.", "category": "local_weather"},
-            {"id": 3, "text": "Research paper on the frequency of extreme weather events.", "category": "extreme_weather"}
-        ]
-        with open(dummy_json_path, "w", encoding="utf-8") as f:
-            json.dump(dummy_data, f)
+        # Mock requests.get for API calls
+        class MockResponse:
+            def __init__(self, json_data, status_code=200):
+                self._json_data = json_data
+                self.status_code = status_code
+                self.text = json.dumps(json_data)
+            def json(self):
+                return self._json_data
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise requests.exceptions.HTTPError(f"HTTP Error: {self.status_code}", response=self)
+
+        original_requests_get = requests.get
+        requests.get = MagicMock(side_effect=[
+            MockResponse({"coord": {"lon": -0.13, "lat": 51.51}, "weather": [{"main": "Clouds"}], "main": {"temp": 20.0}}),
+            MockResponse({"location": {"name": "London"}, "current": {"temp_c": 21.5, "condition": {"text": "Partly cloudy"}}}),
+            MockResponse({"forecast": {"forecastday": [{"date": "2024-07-03", "day": {"avgtemp_c": 22.0}}]}}),
+        ])
+
+        # Test weather_data_fetcher - OpenWeatherMap
+        print("\n--- Testing weather_data_fetcher (OpenWeatherMap) ---")
+        owm_current = weather_data_fetcher(api_name="OpenWeatherMap", data_type="current_weather", location="London")
+        print(f"OpenWeatherMap Current Weather (London): {owm_current}")
+
+        # Test weather_data_fetcher - WeatherAPI.com Current
+        print("\n--- Testing weather_data_fetcher (WeatherAPI) ---")
+        weatherapi_current = weather_data_fetcher(api_name="WeatherAPI", data_type="current_weather", location="London")
+        print(f"WeatherAPI Current Weather (London): {weatherapi_current}")
+
+        # Test weather_data_fetcher - WeatherAPI.com Forecast
+        weatherapi_forecast = weather_data_fetcher(api_name="WeatherAPI", data_type="forecast", location="London", days=1)
+        print(f"WeatherAPI Forecast (London, 1 day): {weatherapi_forecast}")
         
-        # Load documents from the dummy JSON for build_vectorstore
-        loaded_docs_for_vector = load_docs_from_json_file(dummy_json_path)
-        for i, doc in enumerate(loaded_docs_for_vector):
-            doc.page_content = dummy_data[i]["text"]
+        # Restore original requests.get
+        requests.get = original_requests_get
 
-        build_vectorstore(test_user, WEATHER_SECTION, loaded_docs_for_vector, chunk_size=200, chunk_overlap=0)
-        print(f"Vectorstore built for {WEATHER_SECTION}.")
-
-        # Test weather_query_uploaded_docs
-        print("\n--- Testing weather_query_uploaded_docs ---")
-        doc_query = "What did I upload about extreme weather?"
-        doc_results = weather_query_uploaded_docs(doc_query, user_token=test_user)
-        print(f"Query uploaded docs for '{doc_query}':\n{doc_results}")
-
-        # Test weather_summarize_document_by_path
-        print("\n--- Testing weather_summarize_document_by_path ---")
-        # Create a dummy upload directory and file
-        test_upload_dir = Path("uploads") / test_user / WEATHER_SECTION
-        test_upload_dir.mkdir(parents=True, exist_ok=True)
-        summarize_file_path = test_upload_dir / "weather_report.txt"
-        with open(summarize_file_path, "w") as f:
-            f.write("This report analyzes the unusually high temperatures recorded last summer. " * 30 + 
-                    "It discusses potential causes, including a persistent high-pressure system and climate change factors. " * 20 +
-                    "The impact on local agriculture and water resources is also examined." * 25)
-        print(f"Created dummy file for summarization: {summarize_file_path}")
-
-        summary_result = weather_summarize_document_by_path(str(summarize_file_path))
-        print(summary_result)
-
-        # Test weather_data_fetcher (mocked)
-        print("\n--- Testing weather_data_fetcher (mocked) ---")
-        current_weather = weather_data_fetcher(api_name="OpenWeatherMap", data_type="current_weather", location="London")
-        print(f"Current Weather (London, OpenWeatherMap): {current_weather}")
-        forecast_5_days = weather_data_fetcher(api_name="OpenWeatherMap", data_type="forecast", location="Paris", days=5)
-        print(f"5-day Forecast (Paris, OpenWeatherMap): {forecast_5_days[:200]}...")
-        historical_weather = weather_data_fetcher(api_name="WeatherAPI", data_type="historical_weather", location="Berlin", start_date="2024-06-01", end_date="2024-06-02")
-        print(f"Historical Weather (Berlin, WeatherAPI): {historical_weather[:200]}...")
-
-        # Test climate_info_explainer
-        print("\n--- Testing climate_info_explainer ---")
-        climate_explanation = climate_info_explainer("greenhouse effect")
-        print(f"Explanation of 'Greenhouse Effect':\n{climate_explanation}")
-
-        # Test weather_alert_checker
-        print("\n--- Testing weather_alert_checker ---")
-        alerts_check = weather_alert_checker("New York City")
-        print(f"Weather Alerts (New York City): {alerts_check}")
-
-        # Test python_interpreter (example with mock data)
-        print("\n--- Testing python_interpreter with mock data ---")
-        python_code_weather_data = """
+        # Test python_interpreter_with_rbac with mock data (example)
+        print("\n--- Testing python_interpreter_with_rbac with mock data ---")
+        python_code_weather = f"""
 import json
-import pandas as pd
-mock_forecast_data = '''{
-    "location": "Test City",
-    "forecast": [
-        {"date": "2024-07-01", "temp_max": "28°C", "temp_min": "18°C", "conditions": "Sunny"},
-        {"date": "2024-07-02", "temp_max": "26°C", "temp_min": "17°C", "conditions": "Cloudy"},
-        {"date": "2024-07-03", "temp_max": "29°C", "temp_min": "19°C", "conditions": "Clear"}
-    ]
-}'''
-data = json.loads(mock_forecast_data)
-df = pd.DataFrame(data['forecast'])
-df['temp_max_c'] = df['temp_max'].str.extract('(\d+)').astype(float)
-print(f"Average max temperature: {df['temp_max_c'].mean()}°C")
+data = {owm_current}
+temp = data.get('main', {{}}).get('temp')
+weather_desc = data.get('weather', [{{}}])[0].get('main')
+print(f"Temperature: {{temp}} C")
+print(f"Weather: {{weather_desc}}")
 """
-        print(f"Executing Python code:\n{python_code_weather_data}")
+        print(f"Executing Python code:\n{python_code_weather}")
         try:
-            repl_output = python_repl.run(python_code_weather_data)
-            print(f"Python REPL Output:\n{repl_output}")
-        except Exception as e:
-            print(f"Error executing Python REPL: {e}. Make sure pandas, numpy, json are installed.")
+            # Test with a user who has data_analysis_enabled
+            pro_user_token = st.secrets.user_tokens["pro_user_token"]
+            repl_output = python_interpreter_with_rbac(code=python_code_weather, user_token=pro_user_token)
+            print(f"Python REPL Output (Pro User):\n{repl_output}")
+            assert "Temperature: 20.0 C" in repl_output
+            assert "Weather: Clouds" in repl_output
 
+            # Test with a user who does NOT have data_analysis_enabled
+            free_user_token = st.secrets.user_tokens["free_user_token"]
+            repl_output_denied = python_interpreter_with_rbac(code=python_code_weather, user_token=free_user_token)
+            print(f"Python REPL Output (Free User):\n{repl_output_denied}")
+            assert "Access Denied" in repl_output_denied
+
+        except Exception as e:
+            print(f"Error executing Python REPL: {e}.")
+            print("Make sure pandas, numpy, json are installed if you're running complex analysis.")
 
     else:
         print("Skipping weather_tool tests due to ConfigManager issues or missing API keys.")
@@ -541,16 +567,23 @@ print(f"Average max temperature: {df['temp_max_c'].mean()}°C")
         dummy_sports_apis_path = dummy_data_dir / "sports_apis.yaml"
         dummy_media_apis_path = dummy_data_dir / "media_apis.yaml"
         dummy_finance_apis_path = dummy_data_dir / "finance_apis.yaml"
+        dummy_news_apis_path = dummy_data_dir / "news_apis.yaml"
+        dummy_weather_apis_path = dummy_data_dir / "weather_apis.yaml"
+        dummy_entertainment_apis_path = dummy_data_dir / "entertainment_apis.yaml"
         dummy_medical_apis_path = dummy_data_dir / "medical_apis.yaml"
         dummy_legal_apis_path = dummy_data_dir / "legal_apis.yaml"
-        dummy_weather_apis_path = dummy_data_dir / "weather_apis.yaml"
+
 
         if dummy_config_path.exists(): os.remove(dummy_config_path)
         if dummy_sports_apis_path.exists(): os.remove(dummy_sports_apis_path)
         if dummy_media_apis_path.exists(): os.remove(dummy_media_apis_path)
         if dummy_finance_apis_path.exists(): os.remove(dummy_finance_apis_path)
+        if dummy_news_apis_path.exists(): os.remove(dummy_news_apis_path)
+        if dummy_weather_apis_path.exists(): os.remove(dummy_weather_apis_path)
+        if dummy_entertainment_apis_path.exists(): os.remove(dummy_entertainment_apis_path)
         if dummy_medical_apis_path.exists(): os.remove(dummy_medical_apis_path)
         if dummy_legal_apis_path.exists(): os.remove(dummy_legal_apis_path)
-        if dummy_weather_apis_path.exists(): os.remove(dummy_weather_apis_path)
+
         if not os.listdir(dummy_data_dir):
             os.rmdir(dummy_data_dir)
+
