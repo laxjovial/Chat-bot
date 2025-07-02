@@ -1,18 +1,15 @@
-# sports_vector_app.py
+# ui/sports_vector_query_app.py
 
 import streamlit as st
 import logging
 from pathlib import Path
-import os
-import shutil
 
 # Assume config_manager and get_user_token exist
 from config.config_manager import config_manager
-from utils.user_manager import get_user_token
+from utils.user_manager import get_current_user, get_user_tier_capability # Import for RBAC
 
-from shared_tools.import_utils import process_upload, clear_indexed_data, SUPPORTED_DOC_EXTS, BASE_UPLOAD_DIR, BASE_VECTOR_DIR
-from shared_tools.doc_summarizer import summarize_document # For summarization on upload
-from sports_tools.sports_tool import SPORTS_SECTION
+from sports_tools.sports_tool import sports_query_uploaded_docs, SPORTS_SECTION
+from shared_tools.vector_utils import BASE_VECTOR_DIR # For checking if vector store exists
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,8 +24,7 @@ def initialize_app_config():
         # This block is mainly for local testing outside of Streamlit's native 'secrets.toml'
         class MockSecrets:
             def __init__(self):
-                self.openai = {"api_key": "sk-your-openai-key-here"} # Required for embeddings and LLM
-                self.google = {"api_key": "AIzaSy_YOUR_GOOGLE_API_KEY_HERE"} # Required for Google LLM if used
+                self.openai = {"api_key": "sk-your-openai-key-here"} # Required for embeddings
         st.secrets = MockSecrets()
         logger.info("Mocked st.secrets for standalone testing.")
     
@@ -41,90 +37,66 @@ def initialize_app_config():
 
 initialize_app_config()
 
+# --- RBAC Access Check at the Top of the App ---
+current_user = get_current_user()
+user_tier = current_user.get('tier', 'free')
+user_roles = current_user.get('roles', [])
+
+# Define the required tier for this specific page (Query Uploaded Sports Docs)
+# This should match the 'tier_access' defined in main_app.py for this page.
+REQUIRED_TIER_FOR_THIS_PAGE = "basic" 
+
+# Check if user is logged in and has the required tier or admin role
+if not current_user:
+    st.warning("⚠️ You must be logged in to access this page.")
+    st.stop() # Halts execution
+else:
+    # Import TIER_HIERARCHY from main_app for comparison
+    try:
+        from main_app import TIER_HIERARCHY
+    except ImportError:
+        st.error("Error: Could not load tier hierarchy for access control. Please ensure main_app.py is accessible.")
+        st.stop()
+
+    if not (user_tier and user_roles and (TIER_HIERARCHY.get(user_tier, -1) >= TIER_HIERARCHY.get(REQUIRED_TIER_FOR_THIS_PAGE, -1) or "admin" in user_roles)):
+        st.error(f"🚫 Access Denied: Your current tier ({user_tier.capitalize()}) does not have access to query Sports Documents. Please upgrade your plan to {REQUIRED_TIER_FOR_THIS_PAGE.capitalize()} or higher.")
+        st.stop() # Halts execution
+# --- End RBAC Access Check ---
+
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="Upload Sports Docs", page_icon="⬆️", layout="centered")
-st.title("Upload & Manage Sports Documents ⬆️")
+st.set_page_config(page_title="Query Uploaded Sports Docs", page_icon="📚", layout="centered")
+st.title("Query Uploaded Sports Documents 📚")
 
-st.markdown("Upload documents related to sports to enhance the AI Assistant's knowledge base. These documents will be indexed and made searchable via the 'Query Uploaded Sports Docs' app.")
+st.markdown("Search through documents you've previously uploaded to the Sports AI Assistant's memory for the 'sports' section.")
 
-user_token = get_user_token() # Get user token for personalization
+user_token = current_user.get('user_id', 'default') # Get user token for personalization
+vector_store_path = BASE_VECTOR_DIR / user_token / SPORTS_SECTION
 
-uploaded_file = st.file_uploader(
-    f"Choose a document file (Supported: {', '.join(SUPPORTED_DOC_EXTS)})",
-    type=[ext.strip('.') for ext in SUPPORTED_DOC_EXTS]
-)
-
-if uploaded_file is not None:
-    st.write(f"File selected: {uploaded_file.name}")
-    process_and_summarize = st.checkbox("Summarize document after upload?", value=False,
-                                        help="If checked, the document will be summarized using the configured LLM after indexing.")
-    
-    if st.button("Process Document"):
-        with st.spinner("Processing and indexing document..."):
-            try:
-                # Call the generic process_upload with the specific sports section
-                message = process_upload(uploaded_file, user_token, SPORTS_SECTION)
-                st.success(message)
-
-                if process_and_summarize:
-                    st.write("Attempting to summarize the uploaded document...")
-                    
-                    # To summarize the *uploaded* file, we need its content.
-                    # The `uploaded_file` object in Streamlit allows reading its content directly.
-                    # Create a temporary file to pass to summarize_document.
-                    temp_summarize_path = Path(f"temp_summary_{uploaded_file.name}")
-                    try:
-                        with open(temp_summarize_path, "wb") as f:
-                            f.write(uploaded_file.getvalue()) # Read content from uploaded file object
-                        
-                        st.info(f"Summarizing '{uploaded_file.name}' (this might take a moment)...")
-                        summary = summarize_document(temp_summarize_path)
-                        st.subheader("Document Summary:")
-                        st.write(summary)
-                    except Exception as sum_e:
-                        st.warning(f"Could not summarize document: {sum_e}. Ensure your LLM configuration is correct and API keys are valid.")
-                        logger.error(f"Summarization failed for {uploaded_file.name}: {sum_e}", exc_info=True)
-                    finally:
-                        if temp_summarize_path.exists():
-                            temp_summarize_path.unlink() # Clean up temp file
-            except ValueError as e:
-                st.error(f"Upload failed: {e}")
-                logger.error(f"File upload failed due to ValueError: {e}", exc_info=True)
-            except Exception as e:
-                st.error(f"An unexpected error occurred during processing: {e}")
-                logger.error(f"File upload/indexing failed: {e}", exc_info=True)
-
-st.markdown("---")
-st.header("Clear All Indexed Sports Data")
-st.write("This will remove all uploaded files and indexed vector data for the sports section for your user. This action cannot be undone.")
-
-if st.button("Clear All Sports Data", help="This action cannot be undone."):
-    with st.spinner("Clearing data..."):
-        try:
-            # Call the generic clear_indexed_data with the specific sports section
-            message = clear_indexed_data(user_token, SPORTS_SECTION)
-            st.success(message)
-        except Exception as e:
-            st.error(f"An error occurred while clearing data: {e}")
-            logger.error(f"Data clear failed: {e}", exc_info=True)
-
-# Display current status
-st.markdown("---")
-st.subheader("Current Sports Data Status:")
-upload_path_status = BASE_UPLOAD_DIR / user_token / SPORTS_SECTION
-vector_path_status = BASE_VECTOR_DIR / user_token / SPORTS_SECTION
-
-if upload_path_status.exists() and any(upload_path_status.iterdir()):
-    st.info(f"📁 **Uploaded files exist** for sports in: `{upload_path_status}`")
+# Check if the vector store for the current user and sports section exists
+if not vector_store_path.exists() or not any(vector_store_path.iterdir()):
+    st.info(f"No sports documents have been indexed yet for your user. Please go to the 'Upload Sports Docs' page to add documents.")
 else:
-    st.info(f"No uploaded files found for sports.")
+    query = st.text_input("Enter your query for uploaded sports documents:", 
+                           placeholder="e.g., 'What are the key terms in the new player contract?', 'Summarize the scouting report for player X.'")
+    k_results = st.slider("Number of top results to retrieve (k):", min_value=1, max_value=10, value=3)
+    export_results = st.checkbox("Export results to file?", value=False, 
+                                 help="If checked, the search results will be saved to a markdown file in your exports directory.")
 
-if vector_path_status.exists() and any(vector_path_status.iterdir()):
-    st.info(f"🧠 **Indexed data exists** for sports in: `{vector_store_path}`")
-else:
-    st.info(f"No indexed data found for sports.")
+    if st.button("Search Uploaded Documents"):
+        if query:
+            with st.spinner("Searching indexed documents..."):
+                try:
+                    # Call the sports_query_uploaded_docs tool
+                    result = sports_query_uploaded_docs(query=query, user_token=user_token, export=export_results, k=k_results)
+                    st.subheader("Matching Document Chunks:")
+                    st.markdown(result)
+                except Exception as e:
+                    st.error(f"An error occurred during document search: {e}")
+                    logger.error(f"Vector query failed: {e}", exc_info=True)
+        else:
+            st.warning("Please enter a query to search your documents.")
 
 st.markdown("---")
-st.caption(f"Current User Token: `{get_user_token()}` (for demo purposes)")
-st.caption("This app manages the documents that the 'Query Uploaded Sports Docs' app and the 'Sports AI Assistant' use.")
+st.caption(f"Current User Token: `{current_user.get('user_id', 'N/A')}` (for demo purposes)")
+st.caption("This app queries documents you've uploaded and indexed specifically for sports.")
