@@ -1,0 +1,43 @@
+# data/medical_apis.yaml
+# Configuration for various medical and health data APIs
+
+apis:
+  - name: "HealthAPI"
+    type: "medical"
+    endpoint: "https://api.example.com/health/" # Placeholder: Replace with a real medical knowledge base API (e.g., Infermedica, WebMD API if available)
+    key_name: "api_key"
+    key_value: "load_from_secrets.health_api_key" # Key will be loaded from .streamlit/secrets.toml
+    headers: {}
+    default_params: {}
+    functions:
+      symptoms_list: {path: "symptoms"}
+      conditions_list: {path: "conditions"}
+      symptom_checker: {path: "symptom_check"} # Endpoint for symptom checking
+    query_param: "q"
+
+  - name: "WHO_API"
+    type: "medical"
+    endpoint: "https://api.who.int/data/v1/" # Placeholder: Replace with a real WHO or global health data API
+    key_name: "api_key"
+    key_value: "load_from_secrets.who_api_key" # Key will be loaded from .streamlit/secrets.toml
+    headers: {}
+    default_params: {}
+    functions:
+      world_health_updates: {path: "news"} # Endpoint for global health news/updates
+    query_param: "q"
+
+  - name: "GoogleMapsAPI"
+    type: "maps"
+    endpoint: "https://maps.googleapis.com/maps/api/place/textsearch/json" # Example: Google Places API for finding locations
+    key_name: "key"
+    key_value: "load_from_secrets.google_maps_api_key" # Key will be loaded from .streamlit/secrets.toml
+    headers: {}
+    default_params:
+      type: "hospital|pharmacy|doctor" # Default types to search for
+    functions:
+      emergency_services: {path: ""} # Path for textsearch
+    query_param: "query" # Query parameter for textsearch (e.g., "hospitals near London")
+
+# You can add more search-related APIs here if you find specific medical news search APIs
+search_apis: []
+
