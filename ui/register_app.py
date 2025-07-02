@@ -11,7 +11,8 @@ st.title("📝 Create an Account")
 username = st.text_input("Username")
 email = st.text_input("Email")
 password = st.text_input("Password", type="password")
-tier = st.selectbox("Choose your plan", ["free", "pro", "admin"])
+# Updated tier options
+tier = st.selectbox("Choose your plan", ["free", "basic", "pro", "elite", "premium", "admin"])
 
 st.markdown("### 🔒 Security Question")
 security_q = st.text_input("Your question (e.g., Best team?)")
@@ -62,3 +63,5 @@ if st.button("Create Account"):
                 st.warning("Please save your token securely as you will need it to log in.")
         else:
             st.error("❌ Account creation failed. Please try again.")
+
+
