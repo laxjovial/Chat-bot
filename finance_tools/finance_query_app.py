@@ -1,15 +1,22 @@
-# finance_query_app.py
+# ui/finance_query_app.py
 
 import streamlit as st
 import logging
 import json
-import pandas as pd # Potentially useful for displaying structured data
+import pandas as pd
+from datetime import datetime, timedelta # For date inputs
 
 # Assume config_manager and get_user_token exist
 from config.config_manager import config_manager
-from utils.user_manager import get_user_token
+from utils.user_manager import get_current_user, get_user_tier_capability # Import get_current_user and get_user_tier_capability
 
-from finance_tools.finance_tool import finance_search_web, finance_data_fetcher
+from finance_tools.finance_tool import (
+    finance_search_web, 
+    finance_data_fetcher,
+    stock_price_checker,
+    crypto_price_checker,
+    economic_indicator_checker
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,10 +33,8 @@ def initialize_app_config():
                 self.serpapi = {"api_key": "YOUR_SERPAPI_KEY_HERE"}
                 self.google = {"api_key": "AIzaSy_YOUR_GOOGLE_API_KEY_HERE"}
                 self.google_custom_search = {"api_key": "YOUR_GOOGLE_CUSTOM_SEARCH_API_KEY_HERE"}
-                self.alphavantage_api_key = "YOUR_ALPHAVANTAGE_API_KEY_HERE"
-                self.coingecko_api_key = "YOUR_COINGECKO_API_KEY_HERE"
-                self.exchangerate_api_key = "YOUR_EXCHANGERATE_API_KEY_HERE"
-                self.financial_news_api_key = "YOUR_FINANCIAL_NEWS_API_KEY_HERE"
+                self.alpha_vantage = {"api_key": "YOUR_ALPHA_VANTAGE_API_KEY_HERE"}
+                self.coinmarketcap = {"api_key": "YOUR_COINMARKETCAP_API_KEY_HERE"}
         st.secrets = MockSecrets()
         logger.info("Mocked st.secrets for standalone testing.")
     
@@ -42,21 +47,54 @@ def initialize_app_config():
 
 initialize_app_config()
 
+# --- RBAC Access Check at the Top of the App ---
+current_user = get_current_user()
+user_tier = current_user.get('tier', 'free')
+user_roles = current_user.get('roles', [])
+
+# Define the required tier for this specific page (Finance Query Tools)
+# This should match the 'tier_access' defined in main_app.py for this page.
+REQUIRED_TIER_FOR_THIS_PAGE = "basic" 
+
+# Check if user is logged in and has the required tier or admin role
+if not current_user:
+    st.warning("⚠️ You must be logged in to access this page.")
+    st.stop() # Halts execution
+elif not (user_tier and user_roles and (user_tier == REQUIRED_TIER_FOR_THIS_PAGE or user_tier in ["pro", "elite", "premium"] or "admin" in user_roles)):
+    # This check is simplified. A more robust check would use the user_can_access_page function from main_app.
+    # For now, we'll check if the user's tier is at or above the required tier, or if they are an admin.
+    st.error(f"🚫 Access Denied: Your current tier ({user_tier.capitalize()}) does not have access to the Finance Query Tools. Please upgrade your plan to {REQUIRED_TIER_FOR_THIS_PAGE.capitalize()} or higher.")
+    st.stop() # Halts execution
+# --- End RBAC Access Check ---
+
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="Finance Web & Data Query", page_icon="📊", layout="centered")
-st.title("Finance Web & Data Query 📊")
+st.set_page_config(page_title="Finance Query Tools", page_icon="📈", layout="centered")
+st.title("Finance Query Tools 📈")
 
-st.markdown("Query the web for general financial news or fetch specific financial data (e.g., stock prices, crypto, exchange rates).")
+st.markdown("Access various financial and economic tools directly.")
 
-user_token = get_user_token() # Get user token for personalization
+user_token = current_user.get('user_id', 'default') # Get user token for personalization
 
-query_type = st.radio("Select Query Type:", ("Web Search", "Financial Data Fetcher"))
+tool_selection = st.selectbox(
+    "Select a Financial Tool:",
+    (
+        "Web Search (General Financial Info)",
+        "Stock Price Checker",
+        "Crypto Price Checker",
+        "Economic Indicator Checker",
+        "Financial Data Fetcher (Advanced)"
+    )
+)
 
-if query_type == "Web Search":
-    st.subheader("Web Search for Financial News/Information")
-    query = st.text_input("Enter your financial web query:", placeholder="e.g., 'latest S&P 500 news', 'impact of interest rates on housing market'")
-    max_chars = st.slider("Maximum characters in result snippet:", min_value=100, max_value=5000, value=1500, step=100)
+# --- Web Search ---
+if tool_selection == "Web Search (General Financial Info)":
+    st.subheader("General Financial Web Search")
+    query = st.text_input("Enter your financial web query:", placeholder="e.g., 'impact of inflation on tech stocks', 'latest central bank policies'")
+    
+    # RBAC for max_chars in web search
+    allowed_max_chars = get_user_tier_capability(user_token, 'web_search_limit_chars', 2000)
+    max_chars = st.slider(f"Maximum characters in result snippet (Max for your tier: {allowed_max_chars}):", min_value=100, max_value=allowed_max_chars, value=min(1500, allowed_max_chars), step=100)
 
     if st.button("Search Web"):
         if query:
@@ -71,99 +109,109 @@ if query_type == "Web Search":
         else:
             st.warning("Please enter a query to search.")
 
-elif query_type == "Financial Data Fetcher":
-    st.subheader("Fetch Specific Financial Data")
+# --- Stock Price Checker ---
+elif tool_selection == "Stock Price Checker":
+    st.subheader("Stock Price Checker")
+    symbol = st.text_input("Enter stock symbol (e.g., AAPL, GOOGL):", placeholder="AAPL")
     
+    if st.button("Get Stock Price"):
+        if symbol:
+            with st.spinner(f"Fetching price for {symbol}..."):
+                try:
+                    result = stock_price_checker(symbol=symbol)
+                    st.subheader(f"Current Price for {symbol.upper()}:")
+                    st.markdown(result)
+                except Exception as e:
+                    st.error(f"An error occurred: {e}")
+                    logger.error(f"Stock price check failed: {e}", exc_info=True)
+        else:
+            st.warning("Please enter a stock symbol.")
+
+# --- Crypto Price Checker ---
+elif tool_selection == "Crypto Price Checker":
+    st.subheader("Crypto Price Checker")
+    symbol = st.text_input("Enter cryptocurrency symbol (e.g., BTC, ETH):", placeholder="BTC")
+    
+    if st.button("Get Crypto Price"):
+        if symbol:
+            with st.spinner(f"Fetching price for {symbol}..."):
+                try:
+                    result = crypto_price_checker(symbol=symbol)
+                    st.subheader(f"Current Price for {symbol.upper()}:")
+                    st.markdown(result)
+                except Exception as e:
+                    st.error(f"An error occurred: {e}")
+                    logger.error(f"Crypto price check failed: {e}", exc_info=True)
+        else:
+            st.warning("Please enter a crypto symbol.")
+
+# --- Economic Indicator Checker ---
+elif tool_selection == "Economic Indicator Checker":
+    st.subheader("Economic Indicator Checker")
+    indicator_type = st.selectbox(
+        "Select Indicator Type:",
+        ("CPI", "GDP", "UnemploymentRate", "InterestRates"),
+        key="indicator_type_select"
+    )
+    
+    if st.button("Get Indicator Value"):
+        if indicator_type:
+            with st.spinner(f"Fetching {indicator_type} value..."):
+                try:
+                    result = economic_indicator_checker(indicator_type=indicator_type)
+                    st.subheader(f"Latest {indicator_type} Value:")
+                    st.markdown(result)
+                except Exception as e:
+                    st.error(f"An error occurred: {e}")
+                    logger.error(f"Economic indicator check failed: {e}", exc_info=True)
+        else:
+            st.warning("Please select an indicator type.")
+
+# --- Financial Data Fetcher (Advanced) ---
+elif tool_selection == "Financial Data Fetcher (Advanced)":
+    st.subheader("Advanced Financial Data Fetcher")
+    st.info("This tool directly interacts with configured financial APIs. Note that many real financial APIs require specific access and may have usage limits.")
+
     api_name = st.selectbox(
         "Select API to use:",
-        ("AlphaVantage", "CoinGecko", "ExchangeRate-API"),
-        help="Choose the API best suited for your data type."
+        ("AlphaVantage", "FinancialModelingPrep", "CoinMarketCap", "CoinGecko"),
+        key="advanced_api_select"
     )
 
     data_type_options = []
-    if api_name == "AlphaVantage":
-        data_type_options = ["stock_prices", "company_overview", "global_quote"]
-    elif api_name == "CoinGecko":
-        data_type_options = ["crypto_price", "crypto_list", "crypto_market_chart"]
-    elif api_name == "ExchangeRate-API":
-        data_type_options = ["exchange_rate_latest", "exchange_rate_convert"]
+    if api_name in ["AlphaVantage", "FinancialModelingPrep"]:
+        data_type_options = ["stock_data", "economic_indicator"]
+    elif api_name in ["CoinMarketCap", "CoinGecko"]:
+        data_type_options = ["crypto_data"]
 
     data_type = st.selectbox(
         "Select Data Type:",
         data_type_options,
-        key="data_type_select"
+        key="advanced_data_type_select"
     )
-    
-    # Input fields based on selected API and data type
-    symbol = None
-    ids = None
-    base_currency = None
-    target_currency = None
-    amount = None
-    days = None
 
-    if api_name == "AlphaVantage":
-        symbol = st.text_input("Enter Stock Symbol (e.g., AAPL, MSFT):", key="symbol_input_av").upper()
-        # start_date and end_date are not directly used by AlphaVantage's TIME_SERIES_DAILY compact
-        # but could be passed if 'full' outputsize was parsed or for other functions.
-        # For now, keeping it simple as the tool handles the AlphaVantage specifics.
+    symbol_input = st.text_input("Symbol (e.g., AAPL, BTC):", key="symbol_input_fetcher")
+    interval_input = st.text_input("Interval (for historical stock data, e.g., 1min, 5min, daily, weekly, monthly):", key="interval_input_fetcher")
+    indicator_type_input = st.text_input("Indicator Type (for economic indicator, e.g., CPI, GDP):", key="indicator_type_input_fetcher")
+    start_date_input = st.date_input("Start Date (optional, YYYY-MM-DD):", datetime.today() - timedelta(days=30), key="start_date_input_fetcher")
+    end_date_input = st.date_input("End Date (optional, YYYY-MM-DD):", datetime.today(), key="end_date_input_fetcher")
+    limit_input = st.number_input("Limit results (optional):", min_value=1, value=5, step=1, key="limit_input_fetcher")
 
-    elif api_name == "CoinGecko":
-        if data_type == "crypto_price":
-            ids = st.text_input("Enter Crypto IDs (comma-separated, e.g., bitcoin,ethereum):", key="ids_input")
-            vs_currencies = st.text_input("Enter Vs Currencies (comma-separated, e.g., usd,eur):", key="vs_currencies_input")
-        elif data_type == "crypto_market_chart":
-            ids = st.text_input("Enter Crypto ID (e.g., bitcoin):", key="id_input_chart")
-            vs_currencies = st.text_input("Enter Vs Currency (e.g., usd):", key="vs_currency_input_chart")
-            days = st.number_input("Days (1, 7, 14, 30, 90, 180, 365, max):", min_value=1, value=7, step=1, key="days_input")
-        # crypto_list doesn't need additional params
-
-    elif api_name == "ExchangeRate-API":
-        if data_type == "exchange_rate_latest":
-            base_currency = st.text_input("Enter Base Currency (e.g., USD, EUR):", key="base_currency_latest").upper()
-        elif data_type == "exchange_rate_convert":
-            base_currency = st.text_input("Enter Base Currency (e.g., USD):", key="base_currency_convert").upper()
-            target_currency = st.text_input("Enter Target Currency (e.g., EUR):", key="target_currency_convert").upper()
-            amount = st.number_input("Enter Amount to Convert:", min_value=0.01, value=100.0, step=0.01, key="amount_input")
-
-
-    limit = st.number_input("Limit results (e.g., number of data points for lists/charts):", min_value=1, value=5, step=1)
-
-    if st.button("Fetch Data"):
-        # Basic validation for required fields
-        validation_error = False
-        if api_name == "AlphaVantage" and not symbol and data_type != "crypto_list": # crypto_list doesn't require symbol
-            st.warning("Please enter a stock symbol for AlphaVantage queries.")
-            validation_error = True
-        elif api_name == "CoinGecko":
-            if data_type == "crypto_price" and (not ids or not vs_currencies):
-                st.warning("Please enter Crypto IDs and Vs Currencies for crypto price.")
-                validation_error = True
-            elif data_type == "crypto_market_chart" and (not ids or not vs_currencies or not days):
-                st.warning("Please enter Crypto ID, Vs Currency, and Days for crypto market chart.")
-                validation_error = True
-        elif api_name == "ExchangeRate-API":
-            if data_type == "exchange_rate_latest" and not base_currency:
-                st.warning("Please enter a Base Currency for latest exchange rates.")
-                validation_error = True
-            elif data_type == "exchange_rate_convert" and (not base_currency or not target_currency or amount is None):
-                st.warning("Please enter Base Currency, Target Currency, and Amount for conversion.")
-                validation_error = True
-
-        if not validation_error:
+    if st.button("Fetch Advanced Financial Data"):
+        if not symbol_input and not indicator_type_input:
+            st.warning("Please enter a symbol or an indicator type.")
+        else:
             with st.spinner(f"Fetching {data_type} data from {api_name}..."):
                 try:
                     result_json_str = finance_data_fetcher(
                         api_name=api_name,
-                        data_type=data_type, 
-                        symbol=symbol, 
-                        base_currency=base_currency,
-                        target_currency=target_currency,
-                        amount=amount,
-                        ids=ids,
-                        vs_currencies=vs_currencies,
-                        days=days,
-                        limit=limit
+                        data_type=data_type,
+                        symbol=symbol_input if symbol_input else None,
+                        interval=interval_input if interval_input else None,
+                        indicator_type=indicator_type_input if indicator_type_input else None,
+                        start_date=str(start_date_input) if start_date_input else None,
+                        end_date=str(end_date_input) if end_date_input else None,
+                        limit=limit_input if limit_input > 0 else None
                     )
                     
                     st.subheader("Fetched Data:")
@@ -171,8 +219,16 @@ elif query_type == "Financial Data Fetcher":
                         parsed_data = json.loads(result_json_str)
                         st.json(parsed_data)
                         
-                        # Attempt to display as DataFrame if suitable (e.g., list of results, or specific nested data)
-                        if isinstance(parsed_data, list) and parsed_data:
+                        # Attempt to display as DataFrame if suitable
+                        if isinstance(parsed_data, dict) and (parsed_data.get('Time Series (Daily)') or parsed_data.get('Time Series (Weekly)') or parsed_data.get('Time Series (Monthly)')):
+                            # Alpha Vantage time series
+                            time_series_key = next((k for k in parsed_data if 'Time Series' in k), None)
+                            if time_series_key:
+                                df = pd.DataFrame.from_dict(parsed_data[time_series_key], orient='index')
+                                df.index.name = 'Date'
+                                st.subheader("Data as DataFrame:")
+                                st.dataframe(df)
+                        elif isinstance(parsed_data, list) and parsed_data:
                             try:
                                 df = pd.DataFrame(parsed_data)
                                 st.subheader("Data as DataFrame:")
@@ -181,36 +237,7 @@ elif query_type == "Financial Data Fetcher":
                                 logger.warning(f"Could not convert fetched list data to DataFrame: {df_e}")
                                 st.write("Could not display as DataFrame.")
                         elif isinstance(parsed_data, dict):
-                            # Special handling for AlphaVantage Time Series to flatten
-                            if api_name == "AlphaVantage" and "Time Series (Daily)" in parsed_data:
-                                st.subheader("Daily Time Series Data:")
-                                # Flatten the nested dictionary
-                                df_data = []
-                                for date, values in parsed_data["Time Series (Daily)"].items():
-                                    row = {"Date": date}
-                                    for k, v in values.items():
-                                        row[k.split(' ')[1]] = float(v) # e.g., '1. open' -> 'open'
-                                    df_data.append(row)
-                                df = pd.DataFrame(df_data)
-                                df['Date'] = pd.to_datetime(df['Date'])
-                                df.set_index('Date', inplace=True)
-                                st.dataframe(df)
-                            # Special handling for CoinGecko market chart
-                            elif api_name == "CoinGecko" and "prices" in parsed_data:
-                                st.subheader("Market Chart Data:")
-                                df = pd.DataFrame(parsed_data["prices"], columns=['timestamp', 'price'])
-                                df['date'] = pd.to_datetime(df['timestamp'], unit='ms')
-                                df.set_index('date', inplace=True)
-                                st.dataframe(df[['price']])
-                            elif api_name == "ExchangeRate-API" and data_type == "exchange_rate_latest" and "conversion_rates" in parsed_data:
-                                st.subheader("Conversion Rates:")
-                                rates_df = pd.DataFrame(list(parsed_data["conversion_rates"].items()), columns=['Currency', 'Rate'])
-                                st.dataframe(rates_df)
-                            elif api_name == "ExchangeRate-API" and data_type == "exchange_rate_convert" and "conversion_result" in parsed_data:
-                                st.subheader("Conversion Result:")
-                                st.write(f"{parsed_data.get('conversion_result')} {parsed_data.get('target_code')}")
-                            else:
-                                st.write("Data is a dictionary (single item or overview).")
+                            st.write("Data is a dictionary.")
 
                     except json.JSONDecodeError:
                         st.write(result_json_str) # If not JSON, display as plain text
@@ -219,6 +246,7 @@ elif query_type == "Financial Data Fetcher":
                     st.error(f"An error occurred during data fetching: {e}")
                     logger.error(f"Financial data fetcher failed: {e}", exc_info=True)
 
+
 st.markdown("---")
-st.caption(f"Current User Token: `{get_user_token()}` (for demo purposes)")
-st.caption("This app uses web scraping and dedicated financial data API tools.")
+st.caption(f"Current User Token: `{current_user.get('user_id', 'N/A')}` (for demo purposes)")
+st.caption("This app provides direct access to various financial tools.")
