@@ -1,4 +1,4 @@
-# finance_vector_app.py
+# ui/finance_vector_app.py
 
 import streamlit as st
 import logging
@@ -8,7 +8,7 @@ import shutil
 
 # Assume config_manager and get_user_token exist
 from config.config_manager import config_manager
-from utils.user_manager import get_user_token
+from utils.user_manager import get_current_user, get_user_tier_capability # Import for RBAC
 
 from shared_tools.import_utils import process_upload, clear_indexed_data, SUPPORTED_DOC_EXTS, BASE_UPLOAD_DIR, BASE_VECTOR_DIR
 from shared_tools.doc_summarizer import summarize_document # For summarization on upload
@@ -41,6 +41,32 @@ def initialize_app_config():
 
 initialize_app_config()
 
+# --- RBAC Access Check at the Top of the App ---
+current_user = get_current_user()
+user_tier = current_user.get('tier', 'free')
+user_roles = current_user.get('roles', [])
+
+# Define the required tier for this specific page (Upload Finance Docs)
+# This should match the 'tier_access' defined in main_app.py for this page.
+REQUIRED_TIER_FOR_THIS_PAGE = "pro" 
+
+# Check if user is logged in and has the required tier or admin role
+if not current_user:
+    st.warning("⚠️ You must be logged in to access this page.")
+    st.stop() # Halts execution
+else:
+    # Import TIER_HIERARCHY from main_app for comparison
+    try:
+        from main_app import TIER_HIERARCHY
+    except ImportError:
+        st.error("Error: Could not load tier hierarchy for access control. Please ensure main_app.py is accessible.")
+        st.stop()
+
+    if not (user_tier and user_roles and (TIER_HIERARCHY.get(user_tier, -1) >= TIER_HIERARCHY.get(REQUIRED_TIER_FOR_THIS_PAGE, -1) or "admin" in user_roles)):
+        st.error(f"🚫 Access Denied: Your current tier ({user_tier.capitalize()}) does not have access to upload Finance Documents. Please upgrade your plan to {REQUIRED_TIER_FOR_THIS_PAGE.capitalize()} or higher.")
+        st.stop() # Halts execution
+# --- End RBAC Access Check ---
+
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="Upload Finance Docs", page_icon="⬆️", layout="centered")
@@ -48,7 +74,7 @@ st.title("Upload & Manage Finance Documents ⬆️")
 
 st.markdown("Upload financial documents to enhance the AI Assistant's knowledge base. These documents will be indexed and made searchable via the 'Query Uploaded Finance Docs' app.")
 
-user_token = get_user_token() # Get user token for personalization
+user_token = current_user.get('user_id', 'default') # Get user token for personalization
 
 uploaded_file = st.file_uploader(
     f"Choose a document file (Supported: {', '.join(SUPPORTED_DOC_EXTS)})",
@@ -126,5 +152,5 @@ else:
     st.info(f"No indexed data found for finance.")
 
 st.markdown("---")
-st.caption(f"Current User Token: `{get_user_token()}` (for demo purposes)")
+st.caption(f"Current User Token: `{current_user.get('user_id', 'N/A')}` (for demo purposes)")
 st.caption("This app manages the documents that the 'Query Uploaded Finance Docs' app and the 'Finance AI Assistant' use.")
