@@ -8,7 +8,7 @@ from langchain_community.vectorstores import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 
-# Import from the new shared utility file
+# Import get_embedder from the new shared utility file
 from shared_tools.llm_embedding_utils import get_embedder
 
 from config.config_manager import config_manager # Use the new ConfigManager instance
@@ -114,6 +114,7 @@ if __name__ == "__main__":
     import streamlit as st
     import shutil
     import logging
+    import os
     
     logging.basicConfig(level=logging.INFO)
 
@@ -125,19 +126,23 @@ if __name__ == "__main__":
     # Mock the global config_manager instance if it's not already initialized
     try:
         from config.config_manager import ConfigManager
-        # Also need a dummy config.yml for embedding mode/model
+        
+        # Create dummy config.yml for the ConfigManager to load
         dummy_data_dir = Path("data")
         dummy_data_dir.mkdir(exist_ok=True)
-        with open(dummy_data_dir / "config.yml", "w") as f:
+        dummy_config_path = dummy_data_dir / "config.yml"
+        with open(dummy_config_path, "w") as f:
             f.write("rag:\n  embedding_mode: openai\n  embedding_model: text-embedding-ada-002\n")
-
-        # Mock st.secrets if not already set
+        
+        # Initialize config_manager with mocked secrets
         if not hasattr(st, 'secrets'):
             st.secrets = MockSecrets()
             print("Mocked st.secrets for standalone testing.")
         
         # Ensure config_manager is a fresh instance for this test run
-        global config_manager # Declare global to assign
+        # Reset the singleton instance to ensure it reloads with mock data
+        ConfigManager._instance = None
+        ConfigManager._is_loaded = False
         config_manager = ConfigManager()
         print("ConfigManager initialized for testing.")
 
@@ -160,7 +165,7 @@ if __name__ == "__main__":
             {"id": 3, "content": "The capital of France is Paris.", "category": "geography"}
         ]
         with open(dummy_json_path, "w", encoding="utf-8") as f:
-            json.dump(dummy_data)
+            json.dump(dummy_data, f)
         print(f"Created dummy JSON file: {dummy_json_path}")
 
         # 2. Load documents from the dummy JSON
@@ -202,7 +207,7 @@ if __name__ == "__main__":
     
     dummy_data_dir = Path("data")
     if dummy_data_dir.exists():
-        if (dummy_data_dir / "config.yml").exists():
-            (dummy_data_dir / "config.yml").unlink()
+        if dummy_config_path.exists():
+            dummy_config_path.unlink()
         if not list(dummy_data_dir.iterdir()): # Check if directory is empty
             dummy_data_dir.rmdir()
