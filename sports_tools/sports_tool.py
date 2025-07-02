@@ -3,50 +3,56 @@
 from langchain_core.tools import tool
 from typing import Optional, List, Dict, Any
 from pathlib import Path
+import logging
 
 # Import generic tools
 from shared_tools.query_uploaded_docs_tool import QueryUploadedDocs
 from shared_tools.scraper_tool import scrape_web
 from shared_tools.doc_summarizer import summarize_document
-from shared_tools.import_utils import process_upload, clear_indexed_data
+from shared_tools.import_utils import process_upload, clear_indexed_data # Used by Streamlit apps, not directly as agent tools
 from shared_tools.export_utils import export_response, export_vector_results # To be used internally by other tools, or for direct exports
+from shared_tools.vector_utils import build_vectorstore, load_docs_from_json_file, BASE_VECTOR_DIR # For testing and potential future direct use
 
 # Constants for the sports section
 SPORTS_SECTION = "sports"
 DEFAULT_USER_TOKEN = "default" # Or use a proper user management if available
 
+logger = logging.getLogger(__name__)
+
 @tool
 def sports_search_web(query: str, user_token: str = DEFAULT_USER_TOKEN, max_chars: int = 1500) -> str:
     """
     Searches the web for sports-related information using a smart search fallback mechanism.
+    This tool wraps the generic `scrape_web` tool, providing a sports-specific interface.
     
     Args:
-        query (str): The sports-related search query.
+        query (str): The sports-related search query (e.g., "latest NBA scores", "who won the last World Cup").
         user_token (str): The unique identifier for the user. Defaults to "default".
         max_chars (int): Maximum characters for the returned snippet. Defaults to 1500.
     
     Returns:
         str: A string containing relevant information from the web.
     """
-    # This tool directly wraps the generic scrape_web tool
+    logger.info(f"Tool: sports_search_web called with query: '{query}' for user: '{user_token}'")
     return scrape_web(query=query, user_token=user_token, max_chars=max_chars)
 
 @tool
 def sports_query_uploaded_docs(query: str, user_token: str = DEFAULT_USER_TOKEN, export: Optional[bool] = False, k: int = 5) -> str:
     """
     Queries previously uploaded and indexed sports documents for a user using vector similarity search.
+    This tool wraps the generic `QueryUploadedDocs` tool, fixing the section to "sports".
     
     Args:
-        query (str): The search query to find relevant sports documents.
+        query (str): The search query to find relevant sports documents (e.g., "what is Messi's contract details", "summary of the team's scouting report").
         user_token (str): The unique identifier for the user. Defaults to "default".
         export (bool): If True, the results will be saved to a file in markdown format. Defaults to False.
         k (int): The number of top relevant documents to retrieve. Defaults to 5.
     
     Returns:
         str: A string containing the combined content of the relevant document chunks,
-             or a message indicating no data/results found, or the export path.
+             or a message indicating no data/results found, or the export path if exported.
     """
-    # This tool directly wraps the generic QueryUploadedDocs tool, fixing the section to "sports"
+    logger.info(f"Tool: sports_query_uploaded_docs called with query: '{query}' for user: '{user_token}'")
     return QueryUploadedDocs(query=query, user_token=user_token, section=SPORTS_SECTION, export=export, k=k)
 
 @tool
@@ -54,38 +60,42 @@ def sports_summarize_document_by_path(file_path_str: str) -> str:
     """
     Summarizes a document related to sports located at the given file path.
     The file path should be accessible by the system (e.g., in the 'uploads' directory).
+    This tool wraps the generic `summarize_document` tool.
     
     Args:
         file_path_str (str): The full path to the document file to be summarized.
+                              Example: "uploads/default/sports/my_contract.pdf"
     
     Returns:
         str: A concise summary of the document content.
     """
+    logger.info(f"Tool: sports_summarize_document_by_path called for file: '{file_path_str}'")
     file_path = Path(file_path_str)
     if not file_path.exists():
+        logger.error(f"Document not found at '{file_path_str}' for summarization.")
         return f"Error: Document not found at '{file_path_str}'."
     
-    # This tool directly wraps the generic summarize_document tool
     try:
         summary = summarize_document(file_path)
         return f"Summary of '{file_path.name}':\n{summary}"
     except ValueError as e:
+        logger.error(f"Error summarizing document '{file_path_str}': {e}")
         return f"Error summarizing document: {e}"
     except Exception as e:
+        logger.critical(f"An unexpected error occurred during summarization of '{file_path_str}': {e}", exc_info=True)
         return f"An unexpected error occurred during summarization: {e}"
 
-# Note: process_upload and clear_indexed_data are not exposed as direct tools
-# in a conversational agent, but rather used by backend Streamlit apps.
+# Note: `process_upload` and `clear_indexed_data` are not exposed as direct tools
+# for the conversational agent, but rather used by backend Streamlit apps for data management.
 # If an agent *needed* to directly trigger uploads/clears, they could be wrapped too.
 
 # CLI Test (optional)
 if __name__ == "__main__":
     import streamlit as st
-    import logging
     import shutil
     import json
-    from shared_tools.vector_utils import build_vectorstore, load_docs_from_json_file, BASE_VECTOR_DIR
-    from shared_tools.llm_embedding_utils import SUPPORTED_DOC_EXTS
+    import os
+    from config.config_manager import ConfigManager # Import ConfigManager for testing setup
 
     logging.basicConfig(level=logging.INFO)
 
@@ -99,11 +109,11 @@ if __name__ == "__main__":
             self.google_custom_search = {"api_key": "YOUR_GOOGLE_CUSTOM_SEARCH_API_KEY"} # For scrape_web testing
 
     try:
-        from config.config_manager import ConfigManager
         # Create dummy config.yml
         dummy_data_dir = Path("data")
         dummy_data_dir.mkdir(exist_ok=True)
-        with open(dummy_data_dir / "config.yml", "w") as f:
+        dummy_config_path = dummy_data_dir / "config.yml"
+        with open(dummy_config_path, "w") as f:
             f.write("""
 llm:
   provider: openai
@@ -117,7 +127,8 @@ web_scraping:
   timeout_seconds: 5
 """)
         # Create dummy API YAMLs for scraper_tool
-        with open(dummy_data_dir / "sports_apis.yaml", "w") as f:
+        dummy_sports_apis_path = dummy_data_dir / "sports_apis.yaml"
+        with open(dummy_sports_apis_path, "w") as f:
             f.write("""
 search_apis:
   - name: "SerpAPI"
@@ -130,7 +141,8 @@ search_apis:
       engine: "google"
       num: 3
             """)
-        with open(dummy_data_dir / "media_apis.yaml", "w") as f:
+        dummy_media_apis_path = dummy_data_dir / "media_apis.yaml"
+        with open(dummy_media_apis_path, "w") as f:
             f.write("""
 search_apis:
   - name: "GoogleCustomSearch"
@@ -148,7 +160,9 @@ search_apis:
             st.secrets = MockSecrets()
             print("Mocked st.secrets for standalone testing.")
         
-        global config_manager
+        # Ensure config_manager is a fresh instance for this test run
+        ConfigManager._instance = None # Reset the singleton
+        ConfigManager._is_loaded = False
         config_manager = ConfigManager()
         print("ConfigManager initialized for testing.")
 
@@ -177,11 +191,16 @@ search_apis:
         with open(dummy_json_path, "w", encoding="utf-8") as f:
             json.dump(dummy_data, f)
         
-        loaded_docs = load_docs_from_json_file(dummy_json_path)
-        for doc, record in zip(loaded_docs, dummy_data):
-            doc.page_content = record["text"]
+        # Load documents from the dummy JSON for build_vectorstore
+        # Note: load_docs_from_json_file creates Documents where page_content is the stringified JSON.
+        # If your dummy_data has a "text" field, you might want to map it explicitly.
+        loaded_docs_for_vector = load_docs_from_json_file(dummy_json_path)
+        # Manually set page_content from 'text' field for better relevance in this test
+        for i, doc in enumerate(loaded_docs_for_vector):
+            doc.page_content = dummy_data[i]["text"]
 
-        build_vectorstore(test_user, SPORTS_SECTION, loaded_docs, chunk_size=200, chunk_overlap=0)
+
+        build_vectorstore(test_user, SPORTS_SECTION, loaded_docs_for_vector, chunk_size=200, chunk_overlap=0)
         print(f"Vectorstore built for {SPORTS_SECTION}.")
 
         # Test sports_query_uploaded_docs
@@ -213,11 +232,11 @@ search_apis:
         print("Skipping sports_tool tests due to ConfigManager issues or missing API keys.")
 
     # Clean up dummy files and directories
-    if Path("exports") / test_user:
+    if Path("exports").exists() and (Path("exports") / test_user).exists():
         shutil.rmtree(Path("exports") / test_user, ignore_errors=True)
-    if Path("uploads") / test_user:
+    if Path("uploads").exists() and (Path("uploads") / test_user).exists():
         shutil.rmtree(Path("uploads") / test_user, ignore_errors=True)
-    if BASE_VECTOR_DIR / test_user:
+    if BASE_VECTOR_DIR.exists() and (BASE_VECTOR_DIR / test_user).exists():
         shutil.rmtree(BASE_VECTOR_DIR / test_user, ignore_errors=True)
     if dummy_json_path.exists():
         dummy_json_path.unlink()
@@ -225,11 +244,11 @@ search_apis:
     dummy_data_dir = Path("data")
     if dummy_data_dir.exists():
         # Remove only if contents are dummy files created by this script
-        if (dummy_data_dir / "config.yml").exists():
-            os.remove(dummy_data_dir / "config.yml")
-        if (dummy_data_dir / "sports_apis.yaml").exists():
-            os.remove(dummy_data_dir / "sports_apis.yaml")
-        if (dummy_data_dir / "media_apis.yaml").exists():
-            os.remove(dummy_data_dir / "media_apis.yaml")
+        if dummy_config_path.exists():
+            os.remove(dummy_config_path)
+        if dummy_sports_apis_path.exists():
+            os.remove(dummy_sports_apis_path)
+        if dummy_media_apis_path.exists():
+            os.remove(dummy_media_apis_path)
         if not os.listdir(dummy_data_dir):
             os.rmdir(dummy_data_dir)
