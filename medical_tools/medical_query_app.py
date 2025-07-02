@@ -1,4 +1,4 @@
-# medical_query_app.py
+# ui/medical_query_app.py
 
 import streamlit as st
 import logging
@@ -7,16 +7,11 @@ import pandas as pd # Potentially useful for displaying structured data
 
 # Assume config_manager and get_user_token exist
 from config.config_manager import config_manager
-from utils.user_manager import get_user_token
+from utils.user_manager import get_current_user, get_user_tier_capability # Import for RBAC
 
 from medical_tools.medical_tool import (
     medical_search_web, 
-    medical_data_fetcher,
-    symptom_checker,
-    first_aid_instructions,
-    health_tip_generator,
-    emergency_locator,
-    world_health_updates
+    medical_data_fetcher
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -34,9 +29,8 @@ def initialize_app_config():
                 self.serpapi = {"api_key": "YOUR_SERPAPI_KEY_HERE"}
                 self.google = {"api_key": "AIzaSy_YOUR_GOOGLE_API_KEY_HERE"}
                 self.google_custom_search = {"api_key": "YOUR_GOOGLE_CUSTOM_SEARCH_API_KEY_HERE"}
-                self.health_api_key = "YOUR_HEALTH_API_KEY_HERE"
-                self.who_api_key = "YOUR_WHO_API_KEY_HERE"
-                self.google_maps_api_key = "YOUR_GOOGLE_MAPS_API_KEY_HERE"
+                self.who_api_key = "YOUR_WHO_API_KEY_HERE" # For medical_data_fetcher (example)
+                self.cdc_api_key = "YOUR_CDC_API_KEY_HERE" # For medical_data_fetcher (example)
         st.secrets = MockSecrets()
         logger.info("Mocked st.secrets for standalone testing.")
     
@@ -49,33 +43,58 @@ def initialize_app_config():
 
 initialize_app_config()
 
+# --- RBAC Access Check at the Top of the App ---
+current_user = get_current_user()
+user_tier = current_user.get('tier', 'free')
+user_roles = current_user.get('roles', [])
+
+# Define the required tier for this specific page (Medical Query Tools)
+# This should match the 'tier_access' defined in main_app.py for this page.
+REQUIRED_TIER_FOR_THIS_PAGE = "pro" 
+
+# Check if user is logged in and has the required tier or admin role
+if not current_user:
+    st.warning("⚠️ You must be logged in to access this page.")
+    st.stop() # Halts execution
+else:
+    # Import TIER_HIERARCHY from main_app for comparison
+    try:
+        from main_app import TIER_HIERARCHY
+    except ImportError:
+        st.error("Error: Could not load tier hierarchy for access control. Please ensure main_app.py is accessible.")
+        st.stop()
+
+    if not (user_tier and user_roles and (TIER_HIERARCHY.get(user_tier, -1) >= TIER_HIERARCHY.get(REQUIRED_TIER_FOR_THIS_PAGE, -1) or "admin" in user_roles)):
+        st.error(f"🚫 Access Denied: Your current tier ({user_tier.capitalize()}) does not have access to the Medical Query Tools. Please upgrade your plan to {REQUIRED_TIER_FOR_THIS_PAGE.capitalize()} or higher.")
+        st.stop() # Halts execution
+# --- End RBAC Access Check ---
+
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="Medical Query Tools", page_icon="💊", layout="centered")
-st.title("Medical Query Tools 💊")
+st.set_page_config(page_title="Medical Query Tools", page_icon="⚕️", layout="centered")
+st.title("Medical Query Tools ⚕️")
 
 st.markdown("Access various medical and health-related tools directly.")
+st.warning("Disclaimer: This AI assistant provides information for educational purposes only and is not a substitute for professional medical advice. Always consult with a qualified healthcare provider for any health concerns.")
 
-user_token = get_user_token() # Get user token for personalization
+user_token = current_user.get('user_id', 'default') # Get user token for personalization
 
 tool_selection = st.selectbox(
     "Select a Medical Tool:",
     (
-        "Web Search (General Health Info)",
-        "Symptom Checker",
-        "First Aid Instructions",
-        "Health Tip Generator",
-        "Emergency Locator",
-        "World Health Updates",
+        "Web Search (General Medical Info)",
         "Medical Data Fetcher (Advanced)"
     )
 )
 
 # --- Web Search ---
-if tool_selection == "Web Search (General Health Info)":
-    st.subheader("General Health Web Search")
-    query = st.text_input("Enter your health-related web query:", placeholder="e.g., 'latest research on diabetes', 'benefits of mindfulness'")
-    max_chars = st.slider("Maximum characters in result snippet:", min_value=100, max_value=5000, value=1500, step=100)
+if tool_selection == "Web Search (General Medical Info)":
+    st.subheader("General Medical Web Search")
+    query = st.text_input("Enter your medical web query:", placeholder="e.g., 'symptoms of common cold', 'latest cancer research'")
+    
+    # RBAC for max_chars in web search
+    allowed_max_chars = get_user_tier_capability(user_token, 'web_search_limit_chars', 2000)
+    max_chars = st.slider(f"Maximum characters in result snippet (Max for your tier: {allowed_max_chars}):", min_value=100, max_value=allowed_max_chars, value=min(1500, allowed_max_chars), step=100)
 
     if st.button("Search Web"):
         if query:
@@ -90,180 +109,76 @@ if tool_selection == "Web Search (General Health Info)":
         else:
             st.warning("Please enter a query to search.")
 
-# --- Symptom Checker ---
-elif tool_selection == "Symptom Checker":
-    st.subheader("Symptom Checker")
-    st.warning("**Disclaimer:** This tool provides general information and is NOT a substitute for professional medical advice, diagnosis, or treatment. Always consult a qualified healthcare provider for any health concerns.")
-    symptoms_input = st.text_input("Enter comma-separated symptoms (e.g., fever, cough, headache):", placeholder="fever, cough, sore throat")
-    
-    if st.button("Check Symptoms"):
-        if symptoms_input:
-            with st.spinner("Checking symptoms..."):
-                try:
-                    result = symptom_checker(symptoms=symptoms_input)
-                    st.subheader("Possible Conditions:")
-                    st.markdown(result)
-                except Exception as e:
-                    st.error(f"An error occurred during symptom check: {e}")
-                    logger.error(f"Symptom checker failed: {e}", exc_info=True)
-        else:
-            st.warning("Please enter symptoms.")
-
-# --- First Aid Instructions ---
-elif tool_selection == "First Aid Instructions":
-    st.subheader("First Aid Instructions")
-    condition_input = st.text_input("Enter condition or injury for first aid (e.g., cuts, burns, choking, sprain):", placeholder="minor cut")
-    
-    if st.button("Get First Aid"):
-        if condition_input:
-            with st.spinner("Retrieving first aid steps..."):
-                try:
-                    result = first_aid_instructions(condition=condition_input)
-                    st.subheader(f"First Aid for '{condition_input}':")
-                    st.markdown(result)
-                except Exception as e:
-                    st.error(f"An error occurred while getting first aid instructions: {e}")
-                    logger.error(f"First aid tool failed: {e}", exc_info=True)
-        else:
-            st.warning("Please enter a condition.")
-
-# --- Health Tip Generator ---
-elif tool_selection == "Health Tip Generator":
-    st.subheader("Health Tip Generator")
-    topic_input = st.text_input("Enter topic for health tip (optional, e.g., sleep, nutrition, exercise):", placeholder="general")
-    
-    if st.button("Get Health Tip"):
-        with st.spinner("Generating health tip..."):
-            try:
-                result = health_tip_generator(topic=topic_input if topic_input else "general")
-                st.subheader("Your Health Tip:")
-                st.markdown(result)
-            except Exception as e:
-                st.error(f"An error occurred while generating health tip: {e}")
-                logger.error(f"Health tip generator failed: {e}", exc_info=True)
-
-# --- Emergency Locator ---
-elif tool_selection == "Emergency Locator":
-    st.subheader("Emergency Services Locator")
-    location_input = st.text_input("Enter your location (e.g., London, New York City, or 'near me'):", placeholder="London")
-    
-    if st.button("Find Emergency Services"):
-        if location_input:
-            with st.spinner("Finding emergency services..."):
-                try:
-                    result = emergency_locator(location=location_input)
-                    st.subheader(f"Emergency Services near '{location_input}':")
-                    try:
-                        parsed_data = json.loads(result)
-                        if isinstance(parsed_data, list):
-                            for service in parsed_data:
-                                st.write(f"**{service.get('name')}** ({service.get('type')}): {service.get('address')} - {service.get('distance')}")
-                        else:
-                            st.json(parsed_data) # Fallback if structure is unexpected
-                    except json.JSONDecodeError:
-                        st.write(result) # Display raw if not JSON
-                except Exception as e:
-                    st.error(f"An error occurred while locating emergency services: {e}")
-                    logger.error(f"Emergency locator failed: {e}", exc_info=True)
-        else:
-            st.warning("Please enter a location.")
-
-# --- World Health Updates ---
-elif tool_selection == "World Health Updates":
-    st.subheader("World Health Updates")
-    if st.button("Get World Health Updates"):
-        with st.spinner("Fetching world health updates..."):
-            try:
-                result = world_health_updates()
-                st.subheader("Recent Global Health News:")
-                try:
-                    parsed_data = json.loads(result)
-                    if isinstance(parsed_data, list):
-                        for update in parsed_data:
-                            st.write(f"**{update.get('title')}** ({update.get('date')}) - *Source: {update.get('source')}*")
-                    else:
-                        st.json(parsed_data)
-                except json.JSONDecodeError:
-                    st.write(result)
-            except Exception as e:
-                st.error(f"An error occurred while fetching world health updates: {e}")
-                logger.error(f"World health updates failed: {e}", exc_info=True)
-
 # --- Medical Data Fetcher (Advanced) ---
 elif tool_selection == "Medical Data Fetcher (Advanced)":
     st.subheader("Advanced Medical Data Fetcher")
-    st.info("This tool directly interacts with configured medical APIs. Note that many real medical APIs require specific access and may have usage limits.")
+    st.info("This tool directly interacts with configured medical APIs. Note that many real APIs require specific access and may have usage limits.")
 
     api_name = st.selectbox(
         "Select API to use:",
-        ("HealthAPI", "WHO_API", "GoogleMapsAPI"),
-        help="Choose the API best suited for your data type. (Note: These are placeholders in medical_tool.py)"
+        ("WHO", "CDC"), # Add more APIs as configured in medical_apis.yaml
+        key="advanced_api_select"
     )
 
     data_type_options = []
-    if api_name == "HealthAPI":
-        data_type_options = ["symptoms_list", "conditions_list", "symptom_checker"]
-    elif api_name == "WHO_API":
-        data_type_options = ["world_health_updates"]
-    elif api_name == "GoogleMapsAPI":
-        data_type_options = ["emergency_services"]
+    if api_name == "WHO":
+        data_type_options = ["disease_data", "country_health_stats"]
+    elif api_name == "CDC":
+        data_type_options = ["public_health_data", "vaccine_info"]
+    # Add logic for other APIs if they have different data types
 
     data_type = st.selectbox(
         "Select Data Type:",
         data_type_options,
-        key="medical_data_type_select"
+        key="advanced_data_type_select"
     )
 
-    query_input = None
-    location_input = None
-    symptoms_input_fetcher = None
-    
-    if data_type == "symptom_checker" and api_name == "HealthAPI":
-        symptoms_input_fetcher = st.text_input("Enter comma-separated symptoms:", key="symptoms_input_fetcher")
-    elif data_type == "emergency_services" and api_name == "GoogleMapsAPI":
-        location_input = st.text_input("Enter location:", key="location_input_fetcher")
-    elif data_type in ["symptoms_list", "conditions_list"] and api_name == "HealthAPI":
-        query_input = st.text_input("Enter optional query (e.g., 'common', 'infectious'):", key="query_input_fetcher")
+    query_input = st.text_input("Query (e.g., disease name, health topic):", key="query_input_adv")
+    country_input = st.text_input("Country (ISO 2-letter code, optional):", key="country_input_adv")
+    year_input = st.text_input("Year (optional):", key="year_input_adv")
+    limit_input = st.number_input("Limit results (optional):", min_value=1, value=5, step=1, key="limit_input_fetcher")
 
-    limit_input = st.number_input("Limit results (optional):", min_value=1, value=10, step=1, key="limit_input_fetcher")
-
-    if st.button("Fetch Medical Data"):
-        with st.spinner(f"Fetching {data_type} data from {api_name}..."):
-            try:
-                result_json_str = medical_data_fetcher(
-                    api_name=api_name,
-                    data_type=data_type,
-                    query=query_input,
-                    location=location_input,
-                    symptoms=symptoms_input_fetcher,
-                    limit=limit_input
-                )
-                
-                st.subheader("Fetched Data:")
+    if st.button("Fetch Advanced Medical Data"):
+        if not query_input and not country_input and not year_input:
+            st.warning("Please enter a query, country, or year.")
+        else:
+            with st.spinner(f"Fetching {data_type} data from {api_name}..."):
                 try:
-                    parsed_data = json.loads(result_json_str)
-                    st.json(parsed_data)
+                    result_json_str = medical_data_fetcher(
+                        api_name=api_name,
+                        data_type=data_type,
+                        query=query_input if query_input else None,
+                        country=country_input if country_input else None,
+                        year=year_input if year_input else None,
+                        limit=limit_input if limit_input > 0 else None
+                    )
                     
-                    # Attempt to display as DataFrame if suitable
-                    if isinstance(parsed_data, list) and parsed_data:
-                        try:
-                            df = pd.DataFrame(parsed_data)
-                            st.subheader("Data as DataFrame:")
-                            st.dataframe(df)
-                        except Exception as df_e:
-                            logger.warning(f"Could not convert fetched list data to DataFrame: {df_e}")
-                            st.write("Could not display as DataFrame.")
-                    elif isinstance(parsed_data, dict):
-                        st.write("Data is a dictionary.")
+                    st.subheader("Fetched Data:")
+                    try:
+                        parsed_data = json.loads(result_json_str)
+                        st.json(parsed_data)
+                        
+                        # Attempt to display as DataFrame if suitable
+                        if isinstance(parsed_data, list) and parsed_data:
+                            try:
+                                df = pd.DataFrame(parsed_data)
+                                st.subheader("Data as DataFrame:")
+                                st.dataframe(df)
+                            except Exception as df_e:
+                                logger.warning(f"Could not convert fetched list data to DataFrame: {df_e}")
+                                st.write("Could not display as DataFrame.")
+                        elif isinstance(parsed_data, dict):
+                            st.write("Data is a dictionary.")
 
-                except json.JSONDecodeError:
-                    st.write(result_json_str) # If not JSON, display as plain text
-                
-            except Exception as e:
-                st.error(f"An error occurred during data fetching: {e}")
-                logger.error(f"Medical data fetcher failed: {e}", exc_info=True)
+                    except json.JSONDecodeError:
+                        st.write(result_json_str) # If not JSON, display as plain text
+                    
+                except Exception as e:
+                    st.error(f"An error occurred during data fetching: {e}")
+                    logger.error(f"Medical data fetcher failed: {e}", exc_info=True)
 
 
 st.markdown("---")
-st.caption(f"Current User Token: `{get_user_token()}` (for demo purposes)")
-st.caption("This app provides direct access to various medical tools. Remember to always consult a healthcare professional for medical advice.")
+st.caption(f"Current User Token: `{current_user.get('user_id', 'N/A')}` (for demo purposes)")
+st.caption("This app provides direct access to various medical tools.")
+st.warning("Disclaimer: This AI assistant provides information for educational purposes only and is not a substitute for professional medical advice. Always consult with a qualified healthcare provider for any health concerns.")
