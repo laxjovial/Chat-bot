@@ -59,14 +59,43 @@ def initialize_app_config():
 
 initialize_app_config()
 
-# Get LLM based on configuration
-try:
-    # Get the LLM instance using the centralized utility function
-    # Note: LangChain's create_react_agent often works best with ChatOpenAI for now.
-    # If using other LLMs, ensure they are compatible with LangChain agents.
-    llm = get_llm()
-    if not isinstance(llm, ChatOpenAI):
+# --- Streamlit UI for LLM Configuration ---
+st.sidebar.header("LLM Settings")
+# Get default temperature from config_manager
+default_temperature = config_manager.get('llm.temperature', 0.7)
+llm_temperature = st.sidebar.slider(
+    "LLM Temperature (Creativity vs. Focus)",
+    min_value=0.0,
+    max_value=1.0,
+    value=default_temperature,
+    step=0.05,
+    help="Controls the randomness of the LLM's output. Lower values mean more deterministic, higher values mean more creative."
+)
+
+# Get LLM based on configuration and user's temperature choice
+@st.cache_resource # Cache the LLM resource to avoid re-initializing on every rerun
+def get_llm_cached(temperature: float):
+    """Gets the appropriate LLM instance based on global config and provided temperature."""
+    # Call the centralized get_llm with the user-selected temperature
+    llm_instance = get_llm(override_temperature=temperature)
+    
+    # Ensure it's a ChatOpenAI for agent compatibility if that's the expectation
+    # This check is a safeguard; ideally, the agent's prompt should be LLM-agnostic
+    # or the LLM provider should be explicitly set for agent usage.
+    if not isinstance(llm_instance, ChatOpenAI):
         st.warning("The LangChain ReAct agent often performs best with OpenAI models. Ensure your chosen LLM is compatible.")
+    
+    # Add streaming callbacks if the LLM supports it
+    # Note: Not all LLMs or LangChain integrations support streaming callbacks in the same way.
+    if hasattr(llm_instance, 'streaming'):
+        llm_instance.streaming = True
+    if hasattr(llm_instance, 'callbacks'):
+        llm_instance.callbacks = [StreamingStdOutCallbackHandler()]
+    
+    return llm_instance
+
+try:
+    llm = get_llm_cached(llm_temperature)
 except ValueError as e:
     st.error(e)
     st.stop()
@@ -122,8 +151,6 @@ Question: {input}
 prompt = PromptTemplate.from_template(template)
 
 # Create the agent
-# The `create_react_agent` function creates an agent that uses the ReAct framework.
-# `verbose=True` is useful for debugging to see the agent's thought process.
 agent = create_react_agent(llm, tools, prompt)
 agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
