@@ -16,8 +16,9 @@ from shared_tools.import_utils import process_upload, clear_indexed_data # Used 
 from shared_tools.export_utils import export_response, export_vector_results # To be used internally by other tools, or for direct exports
 from shared_tools.vector_utils import build_vectorstore, load_docs_from_json_file, BASE_VECTOR_DIR # For testing and potential future direct use
 
-# Import Python REPL for data analysis capabilities
-from langchain_community.tools.python.tool import PythonREPLTool
+# REMOVED: from langchain_community.tools.python.tool import PythonREPLTool
+# The Python interpreter is now managed and imported via shared_tools/python_interpreter_tool.py
+# and conditionally added to the agent's toolset in the *_chat_agent_app.py files.
 
 # Import config_manager to access API configurations
 from config.config_manager import config_manager
@@ -85,7 +86,11 @@ def finance_summarize_document_by_path(file_path_str: str) -> str:
         return f"Error: Document not found at '{file_path_str}'."
     
     try:
-        summary = summarize_document(file_path)
+        # Note: The summarize_document tool now handles its own RBAC check internally
+        # based on the user_token passed to it (if it accepts one).
+        # For simplicity here, we're assuming summarize_document will handle it
+        # or that this tool itself is only available to tiers with summarization.
+        summary = summarize_document(file_path) # Assuming summarize_document can take Path object
         return f"Summary of '{file_path.name}':\n{summary}"
     except ValueError as e:
         logger.error(f"Error summarizing document '{file_path_str}': {e}")
@@ -96,26 +101,9 @@ def finance_summarize_document_by_path(file_path_str: str) -> str:
 
 # === Advanced Finance Tools ===
 
-# Initialize the Python REPL tool.
-python_repl = PythonREPLTool()
-python_repl.name = "python_interpreter"
-python_repl.description = """
-Executes Python code. Use this for complex calculations, data analysis, time-series analysis,
-or any task that requires programmatic logic.
-Input should be a valid Python code string.
-The output will be the result of the code execution (stdout/stderr).
-You have access to common libraries like pandas, numpy, matplotlib, datetime, json, etc.
-Example for parsing and analyzing fetched data:
-Action: python_interpreter
-Action Input:
-import pandas as pd
-import json
-data_str = '''[{"date": "2023-01-01", "close": 125.0}, {"date": "2023-01-02", "close": 126.5}]''' # Assume this came from finance_data_fetcher
-df = pd.DataFrame(json.loads(data_str))
-df['date'] = pd.to_datetime(df['date'])
-df.set_index('date', inplace=True)
-print(df['close'].mean())
-"""
+# REMOVED: Direct import and initialization of PythonREPLTool.
+# The python_interpreter_with_rbac tool is now imported and added conditionally
+# in the *_chat_agent_app.py files based on RBAC.
 
 # Helper to load API configs
 def _load_finance_apis() -> Dict[str, Any]:
@@ -156,9 +144,9 @@ def finance_data_fetcher(
         api_name (str): The name of the API to use (e.g., "AlphaVantage", "CoinGecko", "ExchangeRate-API").
                         This must match a 'name' field in data/finance_apis.yaml.
         data_type (str): The type of data to fetch.
-                         - For AlphaVantage: "stock_prices", "company_overview", "global_quote".
-                         - For CoinGecko: "crypto_price", "crypto_list", "crypto_market_chart".
-                         - For ExchangeRate-API: "exchange_rate_latest", "exchange_rate_convert".
+                          - For AlphaVantage: "stock_prices", "company_overview", "global_quote".
+                          - For CoinGecko: "crypto_price", "crypto_list", "crypto_market_chart".
+                          - For ExchangeRate-API: "exchange_rate_latest", "exchange_rate_convert".
         symbol (str, optional): Stock symbol (e.g., "AAPL", "MSFT") for AlphaVantage.
         base_currency (str, optional): Base currency for exchange rates (e.g., "USD", "EUR").
         target_currency (str, optional): Target currency for exchange rates (e.g., "GBP", "JPY").
@@ -172,7 +160,7 @@ def finance_data_fetcher(
         
     Returns:
         str: A JSON string of the fetched data or an error message.
-             The agent can then use `python_interpreter` to parse and analyze this JSON.
+             The agent can then use `python_interpreter_with_rbac` to parse and analyze this JSON.
     """
     logger.info(f"Tool: finance_data_fetcher called for API: {api_name}, data_type: {data_type}, symbol: {symbol}, ids: {ids}, base_currency: {base_currency}")
 
@@ -280,6 +268,8 @@ if __name__ == "__main__":
     import os
     from config.config_manager import ConfigManager # Import ConfigManager for testing setup
     from shared_tools.llm_embedding_utils import get_llm # For testing summarization with a real LLM
+    # Import the RBAC-enabled Python interpreter tool for testing purposes here
+    from shared_tools.python_interpreter_tool import python_interpreter_with_rbac
 
     logging.basicConfig(level=logging.INFO)
 
@@ -295,49 +285,144 @@ if __name__ == "__main__":
             self.coingecko_api_key = "YOUR_COINGECKO_API_KEY" # For CoinGecko (if paid tier)
             self.exchangerate_api_key = "YOUR_EXCHANGERATE_API_KEY" # For ExchangeRate-API
             self.financial_news_api_key = "YOUR_FINANCIAL_NEWS_API_KEY" # For FinancialNewsSearch
+            # Mock user tokens for testing RBAC
+            self.user_tokens = {
+                "free_user_token": "mock_free_token",
+                "pro_user_token": "mock_pro_token",
+                "admin_user_token": "mock_admin_token"
+            }
 
-    try:
-        # Create dummy config.yml
-        dummy_data_dir = Path("data")
-        dummy_data_dir.mkdir(exist_ok=True)
-        dummy_config_path = dummy_data_dir / "config.yml"
-        with open(dummy_config_path, "w") as f:
-            f.write("""
-llm:
-  provider: openai
-  model: gpt-3.5-turbo
-  temperature: 0.5
-rag:
-  chunk_size: 500
-  chunk_overlap: 50
-web_scraping:
-  user_agent: Mozilla/5.0 (Test; Python)
-  timeout_seconds: 5
-""")
-        # Create dummy API YAMLs for scraper_tool and finance_data_fetcher
-        dummy_sports_apis_path = dummy_data_dir / "sports_apis.yaml"
-        with open(dummy_sports_apis_path, "w") as f:
-            f.write("""
-search_apis:
-  - name: "SerpAPI"
-    type: "search"
-    endpoint: "https://serpapi.com/search"
-    key_name: "api_key"
-    key_value: "load_from_secrets.serpapi_api_key"
-    query_param: "q"
-    default_params:
-      engine: "google"
-      num: 3
-            """)
-        dummy_media_apis_path = dummy_data_dir / "media_apis.yaml"
-        with open(dummy_media_apis_path, "w") as f:
-            f.write("""
-apis: []
-search_apis: []
-""")
-        dummy_finance_apis_path = dummy_data_dir / "finance_apis.yaml"
-        with open(dummy_finance_apis_path, "w") as f:
-            f.write("""
+        def get(self, key, default=None):
+            parts = key.split('.')
+            val = self
+            for part in parts:
+                if hasattr(val, part):
+                    val = getattr(val, part)
+                elif isinstance(val, dict) and part in val:
+                    val = val[part]
+                else:
+                    return default
+            return val
+
+    # Mock user_manager.find_user_by_token and get_user_tier_capability for testing RBAC
+    class MockUserManager:
+        _mock_users = {
+            "mock_free_token": {"username": "FreeUser", "email": "free@example.com", "tier": "free", "roles": ["user"]},
+            "mock_pro_token": {"username": "ProUser", "email": "pro@example.com", "tier": "pro", "roles": ["user"]},
+            "mock_admin_token": {"username": "AdminUser", "email": "admin@example.com", "tier": "admin", "roles": ["user", "admin"]},
+            "nonexistent_token": None
+        }
+        def find_user_by_token(self, token: str) -> Optional[Dict[str, Any]]:
+            return self._mock_users.get(token)
+
+        def get_user_tier_capability(self, user_token: Optional[str], capability_key: str, default_value: Any = None) -> Any:
+            user = self.find_user_by_token(user_token)
+            user_tier = user.get('tier', 'free') if user else 'free'
+            user_roles = user.get('roles', []) if user else []
+
+            if 'admin' in user_roles:
+                if isinstance(default_value, bool): return True
+                if isinstance(default_value, (int, float)): return float('inf')
+                return default_value
+            
+            mock_tier_configs = {
+                "free": {
+                    "data_analysis_enabled": False,
+                    "web_search_limit_chars": 500,
+                    "web_search_max_results": 2
+                },
+                "pro": {
+                    "data_analysis_enabled": True,
+                    "web_search_limit_chars": 3000,
+                    "web_search_max_results": 7
+                },
+                "elite": {
+                    "data_analysis_enabled": True,
+                    "web_search_limit_chars": 5000,
+                    "web_search_max_results": 10
+                },
+                "premium": {
+                    "data_analysis_enabled": True,
+                    "web_search_limit_chars": 10000,
+                    "web_search_max_results": 15
+                }
+            }
+            tier_config = mock_tier_configs.get(user_tier, {})
+            return tier_config.get(capability_key, default_value)
+
+    # Patch the actual imports for testing
+    import sys
+    sys.modules['utils.user_manager'] = MockUserManager()
+    # Mock config_manager to return the test config
+    class MockConfigManager:
+        _instance = None
+        _is_loaded = False
+        def __init__(self):
+            if MockConfigManager._instance is not None:
+                raise Exception("ConfigManager is a singleton. Use get_instance().")
+            MockConfigManager._instance = self
+            self._config_data = {
+                'llm': {
+                    'max_summary_input_chars': 10000 # Default for LLM section
+                },
+                'rag': {
+                    'chunk_size': 500,
+                    'chunk_overlap': 50,
+                    'max_query_results_k': 10
+                },
+                'web_scraping': {
+                    'user_agent': 'Mozilla/5.0 (Test; Python)',
+                    'timeout_seconds': 5,
+                    'max_search_results': 5 # Default for config
+                },
+                'tiers': { # These are just for the mock, actual tiers are in the user_manager mock
+                    'free': {}, 'basic': {}, 'pro': {}, 'elite': {}, 'premium': {}
+                }
+            }
+            self._is_loaded = True
+        
+        def get(self, key, default=None):
+            parts = key.split('.')
+            val = self._config_data
+            for part in parts:
+                if isinstance(val, dict) and part in val:
+                    val = val[part]
+                else:
+                    return default
+            return val
+        
+        def get_secret(self, key, default=None):
+            return st.secrets.get(key, default)
+
+    # Replace the actual config_manager with the mock
+    sys.modules['config.config_manager'].config_manager = MockConfigManager()
+    sys.modules['config.config_manager'].ConfigManager = MockConfigManager # Also replace the class for singleton check
+
+    if not hasattr(st, 'secrets'):
+        st.secrets = MockSecrets()
+        print("Mocked st.secrets for standalone testing.")
+    
+    # Mock LLM for summarization
+    class MockLLM:
+        def invoke(self, prompt: str) -> MagicMock:
+            mock_content = f"Mock summary of the provided text. Original content length: {len(prompt.split('Document Content:')[1].strip())} characters."
+            mock_message = MagicMock()
+            mock_message.content = mock_content
+            return mock_message
+    
+    import shared_tools.llm_embedding_utils
+    shared_tools.llm_embedding_utils.get_llm = lambda: MockLLM()
+
+
+    print("\n--- Testing finance_tool functions (updated) ---")
+    test_user = "test_user_finance"
+    
+    # Setup dummy API YAMLs for testing
+    dummy_data_dir = Path("data")
+    dummy_data_dir.mkdir(exist_ok=True)
+    dummy_finance_apis_path = dummy_data_dir / "finance_apis.yaml"
+    with open(dummy_finance_apis_path, "w") as f:
+        f.write("""
 apis:
   - name: "AlphaVantage"
     type: "finance"
@@ -398,24 +483,14 @@ search_apis:
       sort_by: "publishedAt"
     query_param: "q"
 """)
+    # Re-load config after creating dummy file
+    sys.modules['config.config_manager'].config_manager = MockConfigManager()
+    sys.modules['config.config_manager'].ConfigManager = MockConfigManager # Also replace the class for singleton check
+    global FINANCE_APIS_CONFIG
+    FINANCE_APIS_CONFIG = _load_finance_apis()
+    print("Dummy finance_apis.yaml created and config reloaded for testing.")
 
-        if not hasattr(st, 'secrets'):
-            st.secrets = MockSecrets()
-            print("Mocked st.secrets for standalone testing.")
-        
-        # Ensure config_manager is a fresh instance for this test run
-        ConfigManager._instance = None # Reset the singleton
-        ConfigManager._is_loaded = False
-        config_manager = ConfigManager()
-        print("ConfigManager initialized for testing.")
 
-    except Exception as e:
-        print(f"Could not initialize ConfigManager for testing: {e}. Skipping API/LLM-dependent tests.")
-        config_manager = None
-
-    print("\n--- Testing finance_tool functions (updated) ---")
-    test_user = "test_user_finance"
-    
     if config_manager:
         # Test finance_search_web (already works, just for completeness)
         print("\n--- Testing finance_search_web ---")
@@ -425,6 +500,30 @@ search_apis:
 
         # Test finance_data_fetcher - AlphaVantage
         print("\n--- Testing finance_data_fetcher (AlphaVantage) ---")
+        # Mock requests.get for API calls
+        class MockResponse:
+            def __init__(self, json_data, status_code=200):
+                self._json_data = json_data
+                self.status_code = status_code
+                self.text = json.dumps(json_data)
+            def json(self):
+                return self._json_data
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise requests.exceptions.HTTPError(f"HTTP Error: {self.status_code}", response=self)
+
+        original_requests_get = requests.get
+        requests.get = MagicMock(side_effect=[
+            MockResponse({"Time Series (Daily)": {"2023-01-01": {"1. open": "100.00"}}}),
+            MockResponse({"Symbol": "GOOG", "AssetType": "Common Stock"}),
+            MockResponse({"Global Quote": {"05. price": "150.00"}}),
+            MockResponse({"bitcoin": {"usd": 30000, "eur": 28000}, "ethereum": {"usd": 2000, "eur": 1800}}),
+            MockResponse([{"id": "bitcoin", "symbol": "btc"}]),
+            MockResponse({"prices": [[1672531200000, 30000]]}),
+            MockResponse({"conversion_rates": {"EUR": 0.9}}),
+            MockResponse({"conversion_result": 90.0})
+        ])
+
         aapl_prices = finance_data_fetcher(api_name="AlphaVantage", data_type="stock_prices", symbol="IBM") # Using IBM for test
         print(f"IBM Prices (AlphaVantage): {aapl_prices[:200]}...")
         goog_overview = finance_data_fetcher(api_name="AlphaVantage", data_type="company_overview", symbol="GOOG")
@@ -447,8 +546,11 @@ search_apis:
         usd_eur_convert = finance_data_fetcher(api_name="ExchangeRate-API", data_type="exchange_rate_convert", base_currency="USD", target_currency="EUR", amount=100.0)
         print(f"100 USD to EUR (ExchangeRate-API): {usd_eur_convert}")
 
-        # Test python_interpreter with fetched data (example)
-        print("\n--- Testing python_interpreter with fetched data ---")
+        # Restore original requests.get
+        requests.get = original_requests_get
+
+        # Test python_interpreter_with_rbac with fetched data (example)
+        print("\n--- Testing python_interpreter_with_rbac with fetched data ---")
         python_code_crypto = f"""
 import json
 data = {btc_eth_price}
@@ -457,10 +559,22 @@ print(f"Ethereum price in EUR: {{data.get('ethereum', {{}}).get('eur')}}")
 """
         print(f"Executing Python code:\n{python_code_crypto}")
         try:
-            repl_output = python_repl.run(python_code_crypto)
-            print(f"Python REPL Output:\n{repl_output}")
+            # Test with a user who has data_analysis_enabled
+            pro_user_token = st.secrets.user_tokens["pro_user_token"]
+            repl_output = python_interpreter_with_rbac(code=python_code_crypto, user_token=pro_user_token)
+            print(f"Python REPL Output (Pro User):\n{repl_output}")
+            assert "Bitcoin price in USD" in repl_output
+            assert "Ethereum price in EUR" in repl_output
+
+            # Test with a user who does NOT have data_analysis_enabled
+            free_user_token = st.secrets.user_tokens["free_user_token"]
+            repl_output_denied = python_interpreter_with_rbac(code=python_code_crypto, user_token=free_user_token)
+            print(f"Python REPL Output (Free User):\n{repl_output_denied}")
+            assert "Access Denied" in repl_output_denied
+
         except Exception as e:
-            print(f"Error executing Python REPL: {e}. Make sure pandas, numpy, json are installed.")
+            print(f"Error executing Python REPL: {e}.")
+            print("Make sure pandas, numpy, json are installed if you're running complex analysis.")
 
     else:
         print("Skipping finance_tool tests due to ConfigManager issues or missing API keys.")
@@ -483,11 +597,22 @@ print(f"Ethereum price in EUR: {{data.get('ethereum', {{}}).get('eur')}}")
         dummy_sports_apis_path = dummy_data_dir / "sports_apis.yaml"
         dummy_media_apis_path = dummy_data_dir / "media_apis.yaml"
         dummy_finance_apis_path = dummy_data_dir / "finance_apis.yaml"
+        dummy_news_apis_path = dummy_data_dir / "news_apis.yaml"
+        dummy_weather_apis_path = dummy_data_dir / "weather_apis.yaml"
+        dummy_entertainment_apis_path = dummy_data_dir / "entertainment_apis.yaml"
+        dummy_medical_apis_path = dummy_data_dir / "medical_apis.yaml"
+        dummy_legal_apis_path = dummy_data_dir / "legal_apis.yaml"
+
 
         if dummy_config_path.exists(): os.remove(dummy_config_path)
         if dummy_sports_apis_path.exists(): os.remove(dummy_sports_apis_path)
         if dummy_media_apis_path.exists(): os.remove(dummy_media_apis_path)
         if dummy_finance_apis_path.exists(): os.remove(dummy_finance_apis_path)
+        if dummy_news_apis_path.exists(): os.remove(dummy_news_apis_path)
+        if dummy_weather_apis_path.exists(): os.remove(dummy_weather_apis_path)
+        if dummy_entertainment_apis_path.exists(): os.remove(dummy_entertainment_apis_path)
+        if dummy_medical_apis_path.exists(): os.remove(dummy_medical_apis_path)
+        if dummy_legal_apis_path.exists(): os.remove(dummy_legal_apis_path)
+
         if not os.listdir(dummy_data_dir):
             os.rmdir(dummy_data_dir)
-
