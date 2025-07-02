@@ -1,4 +1,4 @@
-# news_chat_agent_app.py
+# ui/news_chat_agent_app.py
 
 import streamlit as st
 from langchain_openai import ChatOpenAI
@@ -10,7 +10,7 @@ import logging
 
 # Assume config_manager and get_user_token exist in these paths
 from config.config_manager import config_manager
-from utils.user_manager import get_user_token # For getting a user token for session
+from utils.user_manager import get_current_user, get_user_tier_capability # For getting user token and capabilities
 from shared_tools.llm_embedding_utils import get_llm # For getting the LLM instance
 
 # Import the news-specific tools
@@ -18,10 +18,11 @@ from news_tools.news_tool import (
     news_search_web, 
     news_query_uploaded_docs, 
     news_summarize_document_by_path,
-    python_repl, # The Python REPL tool for data analysis
-    news_data_fetcher, # The tool for fetching news data
-    trending_news_checker
+    news_data_fetcher # The tool for fetching news data
 )
+
+# Import the RBAC-enabled Python interpreter tool
+from shared_tools.python_interpreter_tool import python_interpreter_with_rbac
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -43,7 +44,6 @@ def initialize_app_config():
                 self.serpapi = {"api_key": "YOUR_SERPAPI_KEY_HERE"} 
                 self.google_custom_search = {"api_key": "YOUR_GOOGLE_CUSTOM_SEARCH_API_KEY_HERE"}
                 self.newsapi_api_key = "YOUR_NEWSAPI_API_KEY_HERE" # For news_data_fetcher
-                self.gnews_api_key = "YOUR_GNEWS_API_KEY_HERE" # For news_data_fetcher
         st.secrets = MockSecrets()
         logger.info("Mocked st.secrets for standalone testing.")
     
@@ -103,15 +103,28 @@ except Exception as e:
     st.stop()
 
 # --- Agent Setup ---
-# Include all news tools
+# Get current user for RBAC checks
+current_user = get_current_user()
+user_token = current_user.get('user_id') # Use user_id as user_token for consistency with RBAC checks
+# If user_id is not available (e.g., mock user), fall back to a default or handle appropriately
+if not user_token:
+    user_token = "default" # Fallback for guest users or testing
+
+# Define the base set of tools available to the News Agent
 tools = [
     news_search_web,
     news_query_uploaded_docs,
     news_summarize_document_by_path,
-    python_repl, # For data analysis and complex logic
-    news_data_fetcher, # For fetching news data
-    trending_news_checker
+    news_data_fetcher # The tool for fetching news data
 ]
+
+# Conditionally add the Python interpreter based on user's tier
+if get_user_tier_capability(user_token, 'data_analysis_enabled', False):
+    tools.append(python_interpreter_with_rbac)
+    logger.info(f"Python interpreter enabled for user {user_token} (Tier: {current_user.get('tier')}).")
+else:
+    logger.info(f"Python interpreter NOT enabled for user {user_token} (Tier: {current_user.get('tier')}).")
+
 
 # Define the agent prompt
 # The prompt guides the agent on how to use its tools and respond.
@@ -122,18 +135,12 @@ You have access to the following tools:
 {tools}
 
 **Instructions for using tools:**
-- **`news_search_web`**: Use this tool for general news, recent events, or anything that requires up-to-date information from the broader internet on current affairs.
-- **`news_query_uploaded_docs`**: Use this tool if the user's question seems to refer to specific news articles, research papers, or personal notes that might have been uploaded by them (e.g., "my saved articles on AI", "summary of the political report I uploaded"). Always specify the `user_token` when calling this tool.
-- **`news_summarize_document_by_path`**: Use this tool if the user explicitly asks you to summarize a document and provides a file path (e.g., "summarize the daily briefing at uploads/my_user/news/briefing.pdf").
-- **`news_data_fetcher`**: This is your primary tool for structured news data from configured APIs.
-    - **For Top Headlines**: Use `api_name="NewsAPI"` or `api_name="GNewsAPI"` with `data_type="top_headlines"`. You can specify `category`, `country`, or `language`.
-    - **For Everything Search (comprehensive search)**: Use `api_name="NewsAPI"` with `data_type="everything_search"`. Provide a `query` (keywords).
-    - **For News Sources**: Use `api_name="NewsAPI"` with `data_type="sources"`.
-    - Always specify the `api_name` and `data_type`, and then the relevant parameters for that specific API and data type.
-    - The output will be a JSON string. You will likely need to use `python_interpreter` to parse and analyze this JSON.
-- **`trending_news_checker`**: Use this tool if the user asks about currently trending news topics for a given `category` and `country`.
-- **`python_interpreter`**: This is a powerful tool. Use it for:
-    - **Parsing and Analyzing Fetched Data**: After using `news_data_fetcher`, use this tool to parse the JSON output (e.g., `import json; data = json.loads(tool_output)`) and perform calculations, statistical analysis, or extract specific insights from news data (e.g., counting articles by source, analyzing publication dates).
+- **`news_search_web`**: Use this tool for general news queries, trending topics, or anything that requires up-to-date information from the broader internet on news topics.
+- **`news_query_uploaded_docs`**: Use this tool if the user's question seems to refer to specific news articles, reports, or personal news summaries that might have been uploaded by them (e.g., "my curated news feed", "summary of the political analysis I uploaded"). Always specify the `user_token` when calling this tool.
+- **`news_summarize_document_by_path`**: Use this tool if the user explicitly asks you to summarize a document and provides a file path (e.g., "summarize the news report at uploads/my_user/news/report.pdf").
+- **`news_data_fetcher`**: Use this tool to retrieve specific news articles from configured APIs (e.g., NewsAPI.org). Understand its parameters (`api_name`, `query`, `category`, `country`, `language`, `from_date`, `to_date`, `limit`).
+- **`python_interpreter_with_rbac`**: This is a powerful tool for users with appropriate tiers. Use it for:
+    - **Parsing and Analyzing Fetched Data**: After using `news_data_fetcher`, use this tool to parse the JSON output (e.g., `import json; data = json.loads(tool_output)`) and perform calculations, statistical analysis, or extract specific insights from news datasets (e.g., analyzing sentiment trends in articles, counting articles by source).
     - **Complex Queries**: Any query that requires programmatic logic, conditional statements, or data manipulation that cannot be directly answered by other tools.
     - Print your final results or findings clearly to stdout so I can see them.
 
@@ -142,8 +149,8 @@ You have access to the following tools:
 - If a question can be answered by multiple tools, choose the most specific and efficient one.
 - If you cannot find an answer using your tools, state that clearly and politely.
 - When responding, be concise and directly answer the user's question.
-- Cite your sources (e.g., "[From Web Search]", "[From Uploaded Docs]", "[Python Analysis]", "[From NewsAPI]") when you use a tool to retrieve information or perform analysis.
-- Maintain a professional, objective, and informative tone.
+- Cite your sources (e.g., "[From Web Search]", "[From Uploaded Docs]", "[Python Analysis]", "[From NewsAPI.org]") when you use a tool to retrieve information or perform analysis.
+- Maintain an objective and informative tone.
 
 Begin!
 
@@ -155,13 +162,15 @@ Question: {input}
 prompt = PromptTemplate.from_template(template)
 
 # Create the agent
+# The `create_react_agent` function creates an agent that uses the ReAct framework.
+# `verbose=True` is useful for debugging to see the agent's thought process.
 agent = create_react_agent(llm, tools, prompt)
 agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="News AI Assistant", page_icon="📰", layout="centered")
 st.title("News AI Assistant 📰")
-st.markdown("Your dedicated AI for news and current events. Ask me anything about headlines, specific topics, or trending stories!")
+st.markdown("Your dedicated AI for news and current events. Ask me anything about global or local news!")
 
 # Initialize chat history in Streamlit's session state
 if "messages" not in st.session_state:
@@ -187,7 +196,11 @@ if user_query:
         with st.spinner("Thinking..."):
             try:
                 # Get the current user token. This is important for tools like news_query_uploaded_docs.
-                current_user_token = get_user_token() 
+                current_user_obj = get_current_user()
+                current_user_token = current_user_obj.get('user_id') # Use user_id as token for RBAC checks
+                if not current_user_token:
+                    st.warning("Could not retrieve user token. Functionality might be limited.")
+                    current_user_token = "default" # Fallback for guest users or testing
 
                 # Prepare chat history for the agent.
                 chat_history_str = "\n".join([
@@ -210,5 +223,5 @@ if user_query:
                 logger.error(f"Agent execution failed: {e}", exc_info=True)
 
 st.markdown("---")
-st.caption(f"Current User Token: `{get_user_token()}` (for demo purposes)")
-st.caption("This agent uses web search, queries your uploaded documents, can summarize files, and fetches data from news APIs.")
+st.caption(f"Current User Token: `{current_user.get('user_id', 'N/A')}` (for demo purposes)")
+st.caption("This agent uses web search, queries your uploaded documents, can summarize files, fetches data from news APIs, and can perform data analysis based on your tier.")
