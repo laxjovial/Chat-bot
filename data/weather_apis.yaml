@@ -1,0 +1,33 @@
+# data/weather_apis.yaml
+# Configuration for various weather and climate data APIs
+
+apis:
+  - name: "OpenWeatherMap"
+    type: "weather"
+    endpoint: "https://api.openweathermap.org/data/2.5/"
+    key_name: "appid" # Parameter name for API key in OpenWeatherMap
+    key_value: "load_from_secrets.openweathermap_api_key" # Key will be loaded from .streamlit/secrets.toml
+    headers: {}
+    default_params: {}
+    functions:
+      current_weather: {path: "weather"} # Endpoint for current weather
+      forecast: {path: "forecast"} # Endpoint for 5-day / 3-hour forecast
+      alerts: {path: "onecall"} # OneCall API for alerts, requires lat/lon (not directly city name)
+    query_param: "q" # For city name queries
+
+  - name: "WeatherAPI"
+    type: "weather"
+    endpoint: "http://api.weatherapi.com/v1/"
+    key_name: "key" # Parameter name for API key in WeatherAPI.com
+    key_value: "load_from_secrets.weatherapi_api_key" # Key will be loaded from .streamlit/secrets.toml
+    headers: {}
+    default_params: {}
+    functions:
+      current_weather: {path: "current.json"}
+      forecast: {path: "forecast.json"} # For multiple days forecast
+      historical_weather: {path: "history.json"} # For historical data
+    query_param: "q" # For city name queries
+
+# You can add more weather-related APIs here
+search_apis: []
+
