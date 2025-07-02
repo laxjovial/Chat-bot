@@ -10,60 +10,79 @@ import logging
 
 # Assume config_manager and get_user_token exist in these paths
 from config.config_manager import config_manager
-from utils.user_manager import get_user_token
+from utils.user_manager import get_user_token # For getting a user token for session
+from shared_tools.llm_embedding_utils import get_llm # For getting the LLM instance
 
 # Import the sports-specific tools
 from sports_tools.sports_tool import sports_search_web, sports_query_uploaded_docs, sports_summarize_document_by_path
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# --- Configuration ---
-def initialize_config():
-    """Initializes the config_manager and st.secrets."""
+# --- Configuration Initialization ---
+def initialize_app_config():
+    """
+    Initializes the config_manager and ensures Streamlit secrets are accessible.
+    This function is called once at the start of the app.
+    """
     if not hasattr(st, 'secrets'):
         # This block is mainly for local testing outside of Streamlit's native 'secrets.toml'
+        # In a deployed Streamlit app, st.secrets will be automatically populated.
         class MockSecrets:
             def __init__(self):
                 self.openai = {"api_key": "sk-your-openai-key-here"} # Replace with a real key for live app
-                # Add other secrets as needed by the tools (e.g., serpapi, google custom search)
-                self.serpapi = {"api_key": "YOUR_SERPAPI_KEY"} 
-                self.google = {"api_key": "YOUR_GOOGLE_API_KEY"}
-                self.google_custom_search = {"api_key": "YOUR_GOOGLE_CUSTOM_SEARCH_API_KEY"}
+                self.google = {"api_key": "AIzaSy_YOUR_GOOGLE_API_KEY_HERE"} # Replace with a real key
+                self.serpapi = {"api_key": "YOUR_SERPAPI_KEY_HERE"} 
+                self.google_custom_search = {"api_key": "YOUR_GOOGLE_CUSTOM_SEARCH_API_KEY_HERE"}
         st.secrets = MockSecrets()
-        logging.info("Mocked st.secrets for standalone testing.")
+        logger.info("Mocked st.secrets for standalone testing.")
     
-    if not hasattr(config_manager, '_instance') or config_manager._instance is None:
+    # The config_manager is a singleton and should be initialized on import.
+    # We just ensure it has loaded correctly.
+    if not config_manager._is_loaded:
         try:
-            # You might need to create a dummy config.yml in the 'data' directory for initialization
-            # if running this standalone without a full project setup.
-            # Example: data/config.yml should contain LLM and RAG settings.
-            # config_manager = ConfigManager() # Uncomment if ConfigManager needs explicit instantiation
-            logging.info("ConfigManager assumed to be initialized by importing. Ensure data/config.yml exists.")
+            logger.info("ConfigManager assumed to be initialized by importing. Ensure data/config.yml and other config files exist.")
         except Exception as e:
             st.error(f"Failed to initialize configuration: {e}. Please ensure data/config.yml and .streamlit/secrets.toml are set up correctly.")
             st.stop()
 
-initialize_config()
+initialize_app_config()
 
-# Get LLM based on configuration
-def get_chat_model():
-    """Gets the appropriate LLM instance based on global config."""
-    llm_provider = config_manager.get('llm.provider', 'openai').lower()
-    llm_model = config_manager.get('llm.model', 'gpt-4o')
-    temperature = config_manager.get('llm.temperature', 0.7)
+# --- Streamlit UI for LLM Configuration ---
+st.sidebar.header("LLM Settings")
+# Get default temperature from config_manager
+default_temperature = config_manager.get('llm.temperature', 0.7)
+llm_temperature = st.sidebar.slider(
+    "LLM Temperature (Creativity vs. Focus)",
+    min_value=0.0,
+    max_value=1.0,
+    value=default_temperature,
+    step=0.05,
+    help="Controls the randomness of the LLM's output. Lower values mean more deterministic, higher values mean more creative."
+)
 
-    if llm_provider == "openai":
-        openai_api_key = config_manager.get('openai.api_key')
-        if not openai_api_key:
-            raise ValueError("OpenAI API key not found in secrets.toml under [openai] api_key.")
-        return ChatOpenAI(model=llm_model, temperature=temperature, openai_api_key=openai_api_key, streaming=True, callbacks=[StreamingStdOutCallbackHandler()])
-    # Add other providers if supported by LangChain agents
-    else:
-        raise ValueError(f"Unsupported LLM provider for agent: {llm_provider}. Only OpenAI is supported for agents in this setup.")
+# Get LLM based on configuration and user's temperature choice
+@st.cache_resource # Cache the LLM resource to avoid re-initializing on every rerun
+def get_llm_cached(temperature: float):
+    """Gets the appropriate LLM instance based on global config and provided temperature."""
+    # Call the centralized get_llm with the user-selected temperature
+    llm_instance = get_llm(override_temperature=temperature)
+    
+    # Ensure it's a ChatOpenAI for agent compatibility if that's the expectation
+    if not isinstance(llm_instance, ChatOpenAI):
+        st.warning("The LangChain ReAct agent often performs best with OpenAI models. Ensure your chosen LLM is compatible.")
+    
+    # Add streaming callbacks if the LLM supports it
+    if hasattr(llm_instance, 'streaming'):
+        llm_instance.streaming = True
+    if hasattr(llm_instance, 'callbacks'):
+        llm_instance.callbacks = [StreamingStdOutCallbackHandler()]
+    
+    return llm_instance
 
 try:
-    llm = get_chat_model()
+    llm = get_llm_cached(llm_temperature)
 except ValueError as e:
     st.error(e)
     st.stop()
@@ -80,15 +99,15 @@ tools = [
 
 # Define the agent prompt
 template = """
-You are a specialized sports assistant. Your primary goal is to provide accurate and helpful information about sports.
+You are a highly specialized AI assistant focused on sports. Your primary goal is to provide accurate, concise, and helpful information about sports.
 You have access to the following tools:
 
 {tools}
 
-Use the tools as much as possible to answer questions about sports.
-If a question is about current events or general knowledge, use `sports_search_web`.
-If a question refers to specific documents or data that might have been uploaded, use `sports_query_uploaded_docs`.
-If asked to summarize a document available at a specific file path, use `sports_summarize_document_by_path`.
+**Instructions for using tools:**
+- **`sports_search_web`**: Use this tool for general sports knowledge, current events, recent news, or anything that requires real-time information from the internet.
+- **`sports_query_uploaded_docs`**: Use this tool if the user's question seems to refer to specific documents or data that might have been uploaded by them (e.g., "my team's scouting report", "the contract details I uploaded"). Always specify the `user_token` when calling this tool.
+- **`sports_summarize_document_by_path`**: Use this tool if the user explicitly asks you to summarize a document and provides a file path (e.g., "summarize the article at uploads/my_user/sports/game_analysis.txt").
 
 If you cannot find an answer using your tools, state that clearly and politely.
 When responding, be concise and directly answer the user's question, citing sources when possible.
@@ -108,7 +127,7 @@ agent = create_react_agent(llm, tools, prompt)
 agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="Sports AI Assistant", page_icon="⚽")
+st.set_page_config(page_title="Sports AI Assistant", page_icon="⚽", layout="centered")
 st.title("Sports AI Assistant ⚽")
 
 # Initialize chat history
@@ -126,6 +145,7 @@ for message in st.session_state.messages:
 user_query = st.chat_input("Ask me about sports...")
 
 if user_query:
+    # Add user's query to chat history
     st.session_state.messages.append(HumanMessage(content=user_query))
     with st.chat_message("user"):
         st.write(user_query)
@@ -133,10 +153,10 @@ if user_query:
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
+                # Get the current user token. This is important for tools like sports_query_uploaded_docs.
+                current_user_token = get_user_token() 
+
                 # Prepare chat history for the agent
-                # The agent expects a list of tuples (HumanMessage.content, AIMessage.content)
-                # Or a list of BaseMessage objects, but the template expects a string.
-                # Let's convert to a simple string history for the prompt template.
                 chat_history_str = "\n".join([
                     f"Human: {msg.content}" if isinstance(msg, HumanMessage) else f"AI: {msg.content}"
                     for msg in st.session_state.messages[:-1] # Exclude current human message
@@ -144,11 +164,18 @@ if user_query:
 
                 response = agent_executor.invoke({
                     "input": user_query,
-                    "chat_history": chat_history_str # Pass history as a string
+                    "chat_history": chat_history_str,
+                    "user_token": current_user_token # Pass user_token to the agent so tools can access it
                 })
-                ai_response = response.get("output", "I could not process that request.")
+                
+                ai_response = response.get("output", "I could not process that request. Please try again.")
                 st.write(ai_response)
                 st.session_state.messages.append(AIMessage(content=ai_response))
             except Exception as e:
                 st.error(f"An error occurred: {e}. Please try again or rephrase your question.")
-                logging.error(f"Agent execution failed: {e}", exc_info=True)
+                logger.error(f"Agent execution failed: {e}", exc_info=True)
+
+st.markdown("---")
+st.caption(f"Current User Token: `{get_user_token()}` (for demo purposes)")
+st.caption("This agent uses web search, queries your uploaded documents, and can summarize files.")
+
