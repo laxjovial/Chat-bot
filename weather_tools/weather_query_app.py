@@ -1,19 +1,18 @@
-# weather_query_app.py
+# ui/weather_query_app.py
 
 import streamlit as st
 import logging
 import json
 import pandas as pd # Potentially useful for displaying structured data
+from datetime import datetime, timedelta # For date inputs
 
 # Assume config_manager and get_user_token exist
 from config.config_manager import config_manager
-from utils.user_manager import get_user_token
+from utils.user_manager import get_current_user, get_user_tier_capability # Import for RBAC
 
 from weather_tools.weather_tool import (
     weather_search_web, 
-    weather_data_fetcher,
-    climate_info_explainer,
-    weather_alert_checker
+    weather_data_fetcher
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -31,8 +30,7 @@ def initialize_app_config():
                 self.serpapi = {"api_key": "YOUR_SERPAPI_KEY_HERE"}
                 self.google = {"api_key": "AIzaSy_YOUR_GOOGLE_API_KEY_HERE"}
                 self.google_custom_search = {"api_key": "YOUR_GOOGLE_CUSTOM_SEARCH_API_KEY_HERE"}
-                self.openweathermap_api_key = "YOUR_OPENWEATHERMAP_API_KEY_HERE"
-                self.weatherapi_api_key = "YOUR_WEATHERAPI_API_KEY_HERE"
+                self.openweathermap_api_key = "YOUR_OPENWEATHERMAP_API_KEY_HERE" # For weather_data_fetcher
         st.secrets = MockSecrets()
         logger.info("Mocked st.secrets for standalone testing.")
     
@@ -45,33 +43,57 @@ def initialize_app_config():
 
 initialize_app_config()
 
+# --- RBAC Access Check at the Top of the App ---
+current_user = get_current_user()
+user_tier = current_user.get('tier', 'free')
+user_roles = current_user.get('roles', [])
+
+# Define the required tier for this specific page (Weather Query Tools)
+# This should match the 'tier_access' defined in main_app.py for this page.
+REQUIRED_TIER_FOR_THIS_PAGE = "free" 
+
+# Check if user is logged in and has the required tier or admin role
+if not current_user:
+    st.warning("⚠️ You must be logged in to access this page.")
+    st.stop() # Halts execution
+else:
+    # Import TIER_HIERARCHY from main_app for comparison
+    try:
+        from main_app import TIER_HIERARCHY
+    except ImportError:
+        st.error("Error: Could not load tier hierarchy for access control. Please ensure main_app.py is accessible.")
+        st.stop()
+
+    if not (user_tier and user_roles and (TIER_HIERARCHY.get(user_tier, -1) >= TIER_HIERARCHY.get(REQUIRED_TIER_FOR_THIS_PAGE, -1) or "admin" in user_roles)):
+        st.error(f"🚫 Access Denied: Your current tier ({user_tier.capitalize()}) does not have access to the Weather Query Tools. Please upgrade your plan to {REQUIRED_TIER_FOR_THIS_PAGE.capitalize()} or higher.")
+        st.stop() # Halts execution
+# --- End RBAC Access Check ---
+
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="Weather Query Tools", page_icon="🌤️", layout="centered")
-st.title("Weather Query Tools 🌤️")
+st.set_page_config(page_title="Weather Query Tools", page_icon="☁️", layout="centered")
+st.title("Weather Query Tools ☁️")
 
-st.markdown("Access various weather and climate-related tools directly.")
+st.markdown("Access various weather-related tools directly.")
 
-user_token = get_user_token() # Get user token for personalization
+user_token = current_user.get('user_id', 'default') # Get user token for personalization
 
 tool_selection = st.selectbox(
     "Select a Weather Tool:",
     (
-        "Web Search (General Weather/Climate Info)",
-        "Current Weather",
-        "Weather Forecast",
-        "Historical Weather (requires WeatherAPI.com)",
-        "Weather Alerts",
-        "Climate Info Explainer",
+        "Web Search (General Weather Info)",
         "Weather Data Fetcher (Advanced)"
     )
 )
 
 # --- Web Search ---
-if tool_selection == "Web Search (General Weather/Climate Info)":
-    st.subheader("General Weather/Climate Web Search")
-    query = st.text_input("Enter your weather/climate web query:", placeholder="e.g., 'impact of El Nino on rainfall', 'how do tornadoes form'")
-    max_chars = st.slider("Maximum characters in result snippet:", min_value=100, max_value=5000, value=1500, step=100)
+if tool_selection == "Web Search (General Weather Info)":
+    st.subheader("General Weather Web Search")
+    query = st.text_input("Enter your weather web query:", placeholder="e.g., 'impact of climate change on agriculture', 'history of hurricanes'")
+    
+    # RBAC for max_chars in web search
+    allowed_max_chars = get_user_tier_capability(user_token, 'web_search_limit_chars', 2000)
+    max_chars = st.slider(f"Maximum characters in result snippet (Max for your tier: {allowed_max_chars}):", min_value=100, max_value=allowed_max_chars, value=min(1500, allowed_max_chars), step=100)
 
     if st.button("Search Web"):
         if query:
@@ -86,256 +108,61 @@ if tool_selection == "Web Search (General Weather/Climate Info)":
         else:
             st.warning("Please enter a query to search.")
 
-# --- Current Weather ---
-elif tool_selection == "Current Weather":
-    st.subheader("Current Weather")
-    location_input = st.text_input("Enter location (city, zip code, or lat/lon):", placeholder="London")
-    units_input = st.radio("Units:", ("metric (Celsius)", "imperial (Fahrenheit)"), key="current_weather_units")
-    
-    if st.button("Get Current Weather"):
-        if location_input:
-            with st.spinner("Fetching current weather..."):
-                try:
-                    result = weather_data_fetcher(
-                        api_name="OpenWeatherMap", # Can choose either, OpenWeatherMap is common
-                        data_type="current_weather",
-                        location=location_input,
-                        units="metric" if units_input == "metric (Celsius)" else "imperial"
-                    )
-                    st.subheader(f"Current Weather for '{location_input}':")
-                    try:
-                        parsed_data = json.loads(result)
-                        st.json(parsed_data)
-                        # Display a more user-friendly summary
-                        if parsed_data.get('location'):
-                            temp_unit = "°C" if units_input == "metric (Celsius)" else "°F"
-                            temp = parsed_data.get('temperature') or parsed_data.get('temp_c') or parsed_data.get('temp_f')
-                            if isinstance(temp, (int, float)):
-                                if units_input == "metric (Celsius)":
-                                    temp = f"{temp}°C"
-                                else:
-                                    temp = f"{temp}°F"
-                            
-                            st.write(f"**Location:** {parsed_data.get('location')}")
-                            st.write(f"**Temperature:** {temp}")
-                            st.write(f"**Conditions:** {parsed_data.get('conditions') or parsed_data.get('condition')}")
-                            st.write(f"**Humidity:** {parsed_data.get('humidity')}%")
-                            st.write(f"**Wind Speed:** {parsed_data.get('wind_speed') or parsed_data.get('wind_kph') or parsed_data.get('wind_mph')}")
-                        else:
-                            st.write("Could not parse detailed weather info.")
-                    except json.JSONDecodeError:
-                        st.write(result)
-                except Exception as e:
-                    st.error(f"An error occurred while fetching current weather: {e}")
-                    logger.error(f"Current weather fetch failed: {e}", exc_info=True)
-        else:
-            st.warning("Please enter a location.")
-
-# --- Weather Forecast ---
-elif tool_selection == "Weather Forecast":
-    st.subheader("Weather Forecast")
-    location_input = st.text_input("Enter location (city, zip code, or lat/lon):", key="forecast_location_input", placeholder="Paris")
-    days_input = st.slider("Number of days for forecast:", min_value=1, max_value=14, value=3, step=1)
-    units_input = st.radio("Units:", ("metric (Celsius)", "imperial (Fahrenheit)"), key="forecast_weather_units")
-
-    if st.button("Get Forecast"):
-        if location_input:
-            with st.spinner("Fetching weather forecast..."):
-                try:
-                    result = weather_data_fetcher(
-                        api_name="OpenWeatherMap", # Can choose either, OpenWeatherMap is common
-                        data_type="forecast",
-                        location=location_input,
-                        days=days_input,
-                        units="metric" if units_input == "metric (Celsius)" else "imperial"
-                    )
-                    st.subheader(f"{days_input}-Day Forecast for '{location_input}':")
-                    try:
-                        parsed_data = json.loads(result)
-                        if parsed_data.get('forecast'):
-                            df = pd.DataFrame(parsed_data['forecast'])
-                            # Adjust column names based on OpenWeatherMap or WeatherAPI structure
-                            if 'temp_max' in df.columns and 'temp_min' in df.columns:
-                                df_display = df[['date', 'temp_max', 'temp_min', 'conditions']]
-                            elif 'day' in df.columns and 'maxtemp_c' in df['day'].iloc[0]: # For WeatherAPI.com
-                                df_data = []
-                                for _, row in df.iterrows():
-                                    day_data = row['day']
-                                    df_data.append({
-                                        'date': row['date'],
-                                        'temp_max': f"{day_data['maxtemp_c']}°C" if units_input == "metric (Celsius)" else f"{day_data['maxtemp_f']}°F",
-                                        'temp_min': f"{day_data['mintemp_c']}°C" if units_input == "metric (Celsius)" else f"{day_data['mintemp_f']}°F",
-                                        'conditions': day_data['condition']['text']
-                                    })
-                                df_display = pd.DataFrame(df_data)
-                            else:
-                                df_display = df # Fallback to raw DataFrame
-                            
-                            st.dataframe(df_display)
-                        else:
-                            st.json(parsed_data) # Show raw JSON if forecast structure not found
-                    except json.JSONDecodeError:
-                        st.write(result)
-                except Exception as e:
-                    st.error(f"An error occurred while fetching forecast: {e}")
-                    logger.error(f"Forecast fetch failed: {e}", exc_info=True)
-        else:
-            st.warning("Please enter a location.")
-
-# --- Historical Weather ---
-elif tool_selection == "Historical Weather (requires WeatherAPI.com)":
-    st.subheader("Historical Weather Data")
-    st.info("This feature requires the 'WeatherAPI' integration. Ensure you have a valid API key for WeatherAPI.com in your `secrets.toml`.")
-    location_input = st.text_input("Enter location:", key="historical_location_input", placeholder="Berlin")
-    start_date_input = st.date_input("Start Date:", key="historical_start_date")
-    end_date_input = st.date_input("End Date:", key="historical_end_date")
-    units_input = st.radio("Units:", ("metric (Celsius)", "imperial (Fahrenheit)"), key="historical_weather_units")
-
-    if st.button("Get Historical Weather"):
-        if location_input and start_date_input and end_date_input:
-            if start_date_input > end_date_input:
-                st.error("Start date cannot be after end date.")
-            else:
-                with st.spinner("Fetching historical weather..."):
-                    try:
-                        result = weather_data_fetcher(
-                            api_name="WeatherAPI", # Explicitly use WeatherAPI for historical
-                            data_type="historical_weather",
-                            location=location_input,
-                            start_date=str(start_date_input),
-                            end_date=str(end_date_input),
-                            units="metric" if units_input == "metric (Celsius)" else "imperial"
-                        )
-                        st.subheader(f"Historical Weather for '{location_input}' ({start_date_input} to {end_date_input}):")
-                        try:
-                            parsed_data = json.loads(result)
-                            if parsed_data.get('history') and parsed_data['history'].get('forecastday'):
-                                df_data = []
-                                for day_entry in parsed_data['history']['forecastday']:
-                                    date = day_entry['date']
-                                    avg_temp_c = day_entry['day']['avgtemp_c']
-                                    avg_temp_f = day_entry['day']['avgtemp_f']
-                                    condition = day_entry['day']['condition']['text']
-                                    df_data.append({
-                                        'date': date,
-                                        'avg_temp_c': avg_temp_c,
-                                        'avg_temp_f': avg_temp_f,
-                                        'condition': condition
-                                    })
-                                df = pd.DataFrame(df_data)
-                                st.dataframe(df)
-                            else:
-                                st.json(parsed_data)
-                        except json.JSONDecodeError:
-                            st.write(result)
-                    except Exception as e:
-                        st.error(f"An error occurred while fetching historical weather: {e}")
-                        logger.error(f"Historical weather fetch failed: {e}", exc_info=True)
-        else:
-            st.warning("Please enter location, start date, and end date.")
-
-# --- Weather Alerts ---
-elif tool_selection == "Weather Alerts":
-    st.subheader("Severe Weather Alerts")
-    location_input = st.text_input("Enter location to check for alerts:", key="alerts_location_input", placeholder="New York City")
-    
-    if st.button("Check for Alerts"):
-        if location_input:
-            with st.spinner("Checking for alerts..."):
-                try:
-                    result = weather_alert_checker(location=location_input)
-                    st.subheader(f"Active Weather Alerts for '{location_input}':")
-                    try:
-                        parsed_data = json.loads(result)
-                        if isinstance(parsed_data, list) and parsed_data:
-                            for alert in parsed_data:
-                                st.write(f"**Type:** {alert.get('type')}")
-                                st.write(f"**Area:** {alert.get('area')}")
-                                st.write(f"**Expires:** {alert.get('expires')}")
-                                st.write(f"**Description:** {alert.get('description')}")
-                                st.markdown("---")
-                        elif parsed_data.get('alerts'): # For OpenWeatherMap OneCall structure
-                            alerts_list = parsed_data['alerts']
-                            if alerts_list:
-                                for alert in alerts_list:
-                                    st.write(f"**Event:** {alert.get('event')}")
-                                    st.write(f"**Start:** {pd.to_datetime(alert.get('start'), unit='s')}")
-                                    st.write(f"**End:** {pd.to_datetime(alert.get('end'), unit='s')}")
-                                    st.write(f"**Description:** {alert.get('description')}")
-                                    st.markdown("---")
-                            else:
-                                st.info("No active severe weather alerts for this location.")
-                        else:
-                            st.info("No active severe weather alerts for this location.")
-                    except json.JSONDecodeError:
-                        st.write(result)
-                except Exception as e:
-                    st.error(f"An error occurred while checking for alerts: {e}")
-                    logger.error(f"Weather alert checker failed: {e}", exc_info=True)
-        else:
-            st.warning("Please enter a location.")
-
-# --- Climate Info Explainer ---
-elif tool_selection == "Climate Info Explainer":
-    st.subheader("Climate Information Explainer")
-    topic_input = st.text_input("Enter a climate topic to explain (e.g., El Nino, Greenhouse Effect, Carbon Sequestration):", placeholder="El Nino")
-    
-    if st.button("Explain Climate Topic"):
-        if topic_input:
-            with st.spinner("Explaining climate topic..."):
-                try:
-                    result = climate_info_explainer(topic=topic_input)
-                    st.subheader(f"Explanation of '{topic_input}':")
-                    st.markdown(result)
-                except Exception as e:
-                    st.error(f"An error occurred while explaining the climate topic: {e}")
-                    logger.error(f"Climate info explainer failed: {e}", exc_info=True)
-        else:
-            st.warning("Please enter a climate topic.")
-
 # --- Weather Data Fetcher (Advanced) ---
 elif tool_selection == "Weather Data Fetcher (Advanced)":
     st.subheader("Advanced Weather Data Fetcher")
-    st.info("This tool directly interacts with configured weather APIs. Note that real weather APIs may require specific access and have usage limits.")
+    st.info("This tool directly interacts with configured weather APIs. Note that many real APIs require specific access and may have usage limits.")
 
     api_name = st.selectbox(
         "Select API to use:",
-        ("OpenWeatherMap", "WeatherAPI"),
-        key="advanced_weather_api_select"
+        ("OpenWeatherMap",), # Add more APIs as configured in weather_apis.yaml
+        key="advanced_api_select"
     )
 
     data_type_options = []
     if api_name == "OpenWeatherMap":
-        data_type_options = ["current_weather", "forecast", "alerts"]
-    elif api_name == "WeatherAPI":
-        data_type_options = ["current_weather", "forecast", "historical_weather"]
+        data_type_options = ["current_weather", "forecast_weather", "historical_weather"]
+    # Add logic for other APIs if they have different data types
 
     data_type = st.selectbox(
         "Select Data Type:",
         data_type_options,
-        key="advanced_weather_data_type_select"
+        key="weather_data_type_select"
     )
 
-    location_input_adv = st.text_input("Location:", key="location_input_adv")
-    days_input_adv = st.number_input("Days (for forecast, optional):", min_value=1, max_value=14, value=1, step=1, key="days_input_adv")
-    start_date_input_adv = st.date_input("Start Date (for historical, optional):", key="start_date_input_adv")
-    end_date_input_adv = st.date_input("End Date (for historical, optional):", key="end_date_input_adv")
-    units_input_adv = st.radio("Units:", ("metric", "imperial"), key="units_input_adv")
+    location_input = st.text_input("Location (city name, e.g., London, New York):", key="location_input_adv")
+    days_input = None
+    if data_type == "forecast_weather":
+        days_input = st.number_input("Number of forecast days (max 5 for OpenWeatherMap free tier):", min_value=1, max_value=5, value=3, step=1, key="days_input_adv")
+    elif data_type == "historical_weather":
+        st.warning("Historical weather data for OpenWeatherMap usually requires a paid plan or specific endpoints. This is a placeholder.")
+        start_date_input = st.date_input("Start Date (YYYY-MM-DD):", datetime.today() - timedelta(days=7), key="start_date_input_adv")
+        end_date_input = st.date_input("End Date (YYYY-MM-DD):", datetime.today(), key="end_date_input_adv")
+        # Convert to Unix timestamps if the API requires it
+        start_timestamp = int(datetime.combine(start_date_input, datetime.min.time()).timestamp()) if start_date_input else None
+        end_timestamp = int(datetime.combine(end_date_input, datetime.max.time()).timestamp()) if end_date_input else None
+        st.info(f"Start Timestamp: {start_timestamp}, End Timestamp: {end_timestamp}")
+
+
+    units_input = st.selectbox("Units:", ("metric", "imperial"), key="units_input_adv")
+    limit_input = st.number_input("Limit results (optional):", min_value=1, value=1, step=1, key="limit_input_fetcher") # Limit for general results, not time series
 
     if st.button("Fetch Advanced Weather Data"):
-        if not location_input_adv:
-            st.warning("Location is required for this tool.")
+        if not location_input:
+            st.warning("Please enter a location.")
         else:
             with st.spinner(f"Fetching {data_type} data from {api_name}..."):
                 try:
                     result_json_str = weather_data_fetcher(
                         api_name=api_name,
                         data_type=data_type,
-                        location=location_input_adv,
-                        days=days_input_adv if data_type == "forecast" else None,
-                        start_date=str(start_date_input_adv) if data_type == "historical_weather" else None,
-                        end_date=str(end_date_input_adv) if data_type == "historical_weather" else None,
-                        units=units_input_adv
+                        location=location_input,
+                        days=days_input,
+                        units=units_input,
+                        # For historical, pass timestamps if the tool expects them
+                        start_date=str(start_date_input) if data_type == "historical_weather" else None,
+                        end_date=str(end_date_input) if data_type == "historical_weather" else None,
+                        limit=limit_input if limit_input > 0 else None
                     )
                     
                     st.subheader("Fetched Data:")
@@ -344,16 +171,20 @@ elif tool_selection == "Weather Data Fetcher (Advanced)":
                         st.json(parsed_data)
                         
                         # Attempt to display as DataFrame if suitable
-                        if isinstance(parsed_data, list) and parsed_data:
-                            try:
-                                df = pd.DataFrame(parsed_data)
-                                st.subheader("Data as DataFrame:")
-                                st.dataframe(df)
-                            except Exception as df_e:
-                                logger.warning(f"Could not convert fetched list data to DataFrame: {df_e}")
-                                st.write("Could not display as DataFrame.")
-                        elif isinstance(parsed_data, dict):
-                            st.write("Data is a dictionary.")
+                        if isinstance(parsed_data, dict) and 'list' in parsed_data: # For OpenWeatherMap forecast
+                            df = pd.DataFrame(parsed_data['list'])
+                            # Extract relevant columns and flatten if needed
+                            if 'main' in df.columns and 'weather' in df.columns:
+                                df['temp'] = df['main'].apply(lambda x: x.get('temp'))
+                                df['feels_like'] = df['main'].apply(lambda x: x.get('feels_like'))
+                                df['description'] = df['weather'].apply(lambda x: x[0].get('description') if x else None)
+                                df['dt_txt'] = pd.to_datetime(df['dt_txt'])
+                                st.subheader("Forecast Data as DataFrame:")
+                                st.dataframe(df[['dt_txt', 'temp', 'feels_like', 'description', 'pop', 'wind']].head(limit_input))
+                            else:
+                                st.dataframe(df.head(limit_input))
+                        elif isinstance(parsed_data, dict): # For current weather
+                            st.write("Data is a dictionary (current weather or single item).")
 
                     except json.JSONDecodeError:
                         st.write(result_json_str) # If not JSON, display as plain text
@@ -364,5 +195,5 @@ elif tool_selection == "Weather Data Fetcher (Advanced)":
 
 
 st.markdown("---")
-st.caption(f"Current User Token: `{get_user_token()}` (for demo purposes)")
+st.caption(f"Current User Token: `{current_user.get('user_id', 'N/A')}` (for demo purposes)")
 st.caption("This app provides direct access to various weather tools.")
