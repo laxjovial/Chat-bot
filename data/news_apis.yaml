@@ -1,0 +1,31 @@
+# data/news_apis.yaml
+# Configuration for various news data APIs
+
+apis:
+  - name: "NewsAPI"
+    type: "news"
+    endpoint: "https://newsapi.org/v2/"
+    key_name: "apiKey" # Parameter name for API key in NewsAPI.org
+    key_value: "load_from_secrets.newsapi_api_key" # Key will be loaded from .streamlit/secrets.toml
+    headers: {}
+    default_params: {}
+    functions:
+      top_headlines: {path: "top-headlines"} # Endpoint for top headlines
+      everything_search: {path: "everything"} # Endpoint for searching all articles
+      sources: {path: "sources"} # Endpoint for listing news sources
+    query_param: "q" # General query parameter for search
+
+  - name: "GNewsAPI"
+    type: "news"
+    endpoint: "https://gnews.io/api/v4/"
+    key_name: "token" # Parameter name for API key in GNews
+    key_value: "load_from_secrets.gnews_api_key" # Key will be loaded from .streamlit/secrets.toml
+    headers: {}
+    default_params: {}
+    functions:
+      top_headlines: {path: "top-headlines"} # Endpoint for top headlines
+    query_param: "q" # General query parameter for search
+
+# You can add more news-related APIs here (e.g., Mediastack, New York Times API)
+search_apis: []
+
