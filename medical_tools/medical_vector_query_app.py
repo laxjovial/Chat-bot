@@ -1,4 +1,4 @@
-# medical_vector_query_app.py
+# ui/medical_vector_query_app.py
 
 import streamlit as st
 import logging
@@ -6,7 +6,7 @@ from pathlib import Path
 
 # Assume config_manager and get_user_token exist
 from config.config_manager import config_manager
-from utils.user_manager import get_user_token
+from utils.user_manager import get_current_user, get_user_tier_capability # Import for RBAC
 
 from medical_tools.medical_tool import medical_query_uploaded_docs, MEDICAL_SECTION
 from shared_tools.vector_utils import BASE_VECTOR_DIR # For checking if vector store exists
@@ -37,6 +37,32 @@ def initialize_app_config():
 
 initialize_app_config()
 
+# --- RBAC Access Check at the Top of the App ---
+current_user = get_current_user()
+user_tier = current_user.get('tier', 'free')
+user_roles = current_user.get('roles', [])
+
+# Define the required tier for this specific page (Query Uploaded Medical Docs)
+# This should match the 'tier_access' defined in main_app.py for this page.
+REQUIRED_TIER_FOR_THIS_PAGE = "premium" 
+
+# Check if user is logged in and has the required tier or admin role
+if not current_user:
+    st.warning("⚠️ You must be logged in to access this page.")
+    st.stop() # Halts execution
+else:
+    # Import TIER_HIERARCHY from main_app for comparison
+    try:
+        from main_app import TIER_HIERARCHY
+    except ImportError:
+        st.error("Error: Could not load tier hierarchy for access control. Please ensure main_app.py is accessible.")
+        st.stop()
+
+    if not (user_tier and user_roles and (TIER_HIERARCHY.get(user_tier, -1) >= TIER_HIERARCHY.get(REQUIRED_TIER_FOR_THIS_PAGE, -1) or "admin" in user_roles)):
+        st.error(f"🚫 Access Denied: Your current tier ({user_tier.capitalize()}) does not have access to query Medical Documents. Please upgrade your plan to {REQUIRED_TIER_FOR_THIS_PAGE.capitalize()} or higher.")
+        st.stop() # Halts execution
+# --- End RBAC Access Check ---
+
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="Query Uploaded Medical Docs", page_icon="📚", layout="centered")
@@ -44,7 +70,7 @@ st.title("Query Uploaded Medical Documents 📚")
 
 st.markdown("Search through medical/health documents you've previously uploaded to the Medical AI Assistant's memory for the 'medical' section.")
 
-user_token = get_user_token() # Get user token for personalization
+user_token = current_user.get('user_id', 'default') # Get user token for personalization
 vector_store_path = BASE_VECTOR_DIR / user_token / MEDICAL_SECTION
 
 # Check if the vector store for the current user and medical section exists
@@ -72,5 +98,5 @@ else:
             st.warning("Please enter a query to search your documents.")
 
 st.markdown("---")
-st.caption(f"Current User Token: `{get_user_token()}` (for demo purposes)")
+st.caption(f"Current User Token: `{current_user.get('user_id', 'N/A')}` (for demo purposes)")
 st.caption("This app queries documents you've uploaded and indexed specifically for medical/health topics.")
