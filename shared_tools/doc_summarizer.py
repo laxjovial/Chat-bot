@@ -4,74 +4,14 @@ import os
 from typing import List
 from pathlib import Path
 
-from langchain_community.document_loaders import (
-    PyPDFLoader, TextLoader, CSVLoader,
-    UnstructuredMarkdownLoader, UnstructuredWordDocumentLoader
-)
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.chains.summarize import load_summarize_chain
 from langchain_core.documents import Document
 from langchain_core.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
-from langchain_google_genai import ChatGoogleGenerativeAI # Added for Google Gemini
-from langchain_community.llms import Ollama # Added for Ollama
+
+# Import from the new shared utility file
+from shared_tools.llm_embedding_utils import get_llm, load_and_chunk_document, SUPPORTED_DOC_EXTS
 
 from config.config_manager import config_manager # Use the new ConfigManager instance
-
-# === Supported Document Extensions ===
-SUPPORTED_DOC_EXTS = [".pdf", ".txt", ".csv", ".md", ".docx"]
-
-# === File Loader ===
-def load_and_chunk(file_path: Path) -> List[Document]:
-    """
-    Loads a document from the given path and splits it into chunks.
-    Uses generic document loaders.
-    """
-    ext = file_path.suffix.lower()
-    if ext == ".pdf":
-        docs = PyPDFLoader(str(file_path)).load()
-    elif ext == ".txt":
-        docs = TextLoader(str(file_path)).load()
-    elif ext == ".csv":
-        docs = CSVLoader(str(file_path)).load()
-    elif ext == ".md":
-        docs = UnstructuredMarkdownLoader(str(file_path)).load()
-    elif ext == ".docx":
-        docs = UnstructuredWordDocumentLoader(str(file_path)).load()
-    else:
-        raise ValueError(f"Unsupported file type for summarization: {ext}. Supported types are: {', '.join(SUPPORTED_DOC_EXTS)}")
-
-    # Get chunk size and overlap from config, with defaults
-    chunk_size = config_manager.get('rag.chunk_size', 1000)
-    chunk_overlap = config_manager.get('rag.chunk_overlap', 150)
-
-    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    return splitter.split_documents(docs)
-
-# === LLM Selector ===
-def get_llm_for_summarization():
-    """Gets the appropriate LLM instance based on global config."""
-    llm_provider = config_manager.get('llm.provider', 'openai').lower()
-    llm_model = config_manager.get('llm.model', 'gpt-4o')
-    temperature = config_manager.get('llm.temperature', 0.7)
-
-    if llm_provider == "openai":
-        openai_api_key = config_manager.get('openai.api_key')
-        if not openai_api_key:
-            raise ValueError("OpenAI API key not found in secrets.toml under [openai] api_key.")
-        return ChatOpenAI(model=llm_model, temperature=temperature, openai_api_key=openai_api_key)
-    elif llm_provider == "google":
-        google_api_key = config_manager.get('google.api_key')
-        if not google_api_key:
-            raise ValueError("Google API key not found in secrets.toml under [google] api_key.")
-        # Ensure model is appropriate for Google (e.g., "gemini-pro")
-        return ChatGoogleGenerativeAI(model=llm_model, temperature=temperature, google_api_key=google_api_key)
-    elif llm_provider == "ollama":
-        # Ollama might not require an API key, check config for base_url
-        ollama_base_url = config_manager.get('ollama.api_url', 'http://localhost:11434')
-        return Ollama(model=llm_model, base_url=ollama_base_url, temperature=temperature)
-    else:
-        raise ValueError(f"Unsupported LLM provider for summarization: {llm_provider}")
 
 
 # === Summarize a file ===
@@ -79,8 +19,8 @@ def summarize_document(file_path: Path) -> str:
     """
     Summarizes a document located at file_path using the configured LLM.
     """
-    llm = get_llm_for_summarization()
-    docs = load_and_chunk(file_path)
+    llm = get_llm()
+    docs = load_and_chunk_document(file_path) # Use the shared loading and chunking function
 
     # Use 'stuff' chain type for smaller documents, or 'map_reduce' for larger
     # For simplicity and general use, 'stuff' works well if chunks are combined first
@@ -88,22 +28,11 @@ def summarize_document(file_path: Path) -> str:
     # Here, we'll assume chunks fit within context for 'stuff' if summarized iteratively
     # Or, more robustly, use map_reduce or refine.
     
-    # A simple 'stuff' chain for summarization (best for smaller documents / few chunks)
-    # If the document is very large (many chunks), a map_reduce chain would be better.
-    # For now, let's keep it simple. The chunking should help fit into context.
-    
     # If a document has many chunks, and 'stuff' fails due to context window,
     # consider changing to 'map_reduce' or 'refine' type.
     # For now, assuming relatively small documents that fit in context after chunking,
     # or that the LLM is powerful enough to handle larger contexts.
     
-    # Example for `stuff` with custom prompt (optional, but good for control)
-    # prompt_template = """Write a concise summary of the following:
-    # "{text}"
-    # CONCISE SUMMARY:"""
-    # PROMPT = PromptTemplate(template=prompt_template, input_variables=["text"])
-    # chain = load_summarize_chain(llm, chain_type="stuff", prompt=PROMPT)
-
     chain = load_summarize_chain(llm, chain_type="stuff")
     summary = chain.run(docs)
 
@@ -139,6 +68,7 @@ if __name__ == "__main__":
                 print("Mocked st.secrets for standalone testing.")
             
             # Ensure config_manager is a fresh instance for this test run
+            global config_manager # Declare global to assign
             config_manager = ConfigManager()
             print("ConfigManager initialized for testing.")
 
@@ -167,4 +97,13 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Error during summarization test: {e}")
     else:
-        print("Skipping summarization test due to Config
+        print("Skipping summarization test due to Config")
+    
+    if dummy_file_path.exists():
+        dummy_file_path.unlink()
+    dummy_data_dir = Path("data")
+    if dummy_data_dir.exists():
+        if (dummy_data_dir / "config.yml").exists():
+            (dummy_data_dir / "config.yml").unlink()
+        if not list(dummy_data_dir.iterdir()):
+            dummy_data_dir.rmdir()
