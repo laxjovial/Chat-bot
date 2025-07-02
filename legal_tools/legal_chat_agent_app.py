@@ -1,4 +1,4 @@
-# legal_chat_agent_app.py
+# ui/legal_chat_agent_app.py
 
 import streamlit as st
 from langchain_openai import ChatOpenAI
@@ -10,7 +10,7 @@ import logging
 
 # Assume config_manager and get_user_token exist in these paths
 from config.config_manager import config_manager
-from utils.user_manager import get_user_token # For getting a user token for session
+from utils.user_manager import get_current_user, get_user_tier_capability # For getting user token and capabilities
 from shared_tools.llm_embedding_utils import get_llm # For getting the LLM instance
 
 # Import the legal-specific tools
@@ -18,11 +18,11 @@ from legal_tools.legal_tool import (
     legal_search_web, 
     legal_query_uploaded_docs, 
     legal_summarize_document_by_path,
-    python_repl, # The Python REPL tool for data analysis
-    legal_data_fetcher, # The tool for fetching legal data
-    legal_term_explainer,
-    contract_analyzer
+    legal_data_fetcher # The tool for fetching legal data
 )
+
+# Import the RBAC-enabled Python interpreter tool
+from shared_tools.python_interpreter_tool import python_interpreter_with_rbac
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -43,9 +43,8 @@ def initialize_app_config():
                 self.google = {"api_key": "AIzaSy_YOUR_GOOGLE_API_KEY_HERE"} # Replace with a real key
                 self.serpapi = {"api_key": "YOUR_SERPAPI_KEY_HERE"} 
                 self.google_custom_search = {"api_key": "YOUR_GOOGLE_CUSTOM_SEARCH_API_KEY_HERE"}
-                self.legal_api_key = "YOUR_LEGAL_API_KEY_HERE" # For legal_data_fetcher
-                self.govlaw_api_key = "YOUR_GOVLAW_API_KEY_HERE" # For legal_data_fetcher
-                self.intllaw_api_key = "YOUR_INTLLAW_API_KEY_HERE" # For legal_data_fetcher
+                # Add any specific legal API keys here if you implement a legal_data_fetcher
+                # self.legal_api_key = "YOUR_LEGAL_API_KEY_HERE" 
         st.secrets = MockSecrets()
         logger.info("Mocked st.secrets for standalone testing.")
     
@@ -105,54 +104,55 @@ except Exception as e:
     st.stop()
 
 # --- Agent Setup ---
-# Include all legal tools
+# Get current user for RBAC checks
+current_user = get_current_user()
+user_token = current_user.get('user_id') # Use user_id as user_token for consistency with RBAC checks
+# If user_id is not available (e.g., mock user), fall back to a default or handle appropriately
+if not user_token:
+    user_token = "default" # Fallback for guest users or testing
+
+# Define the base set of tools available to the Legal Agent
 tools = [
     legal_search_web,
     legal_query_uploaded_docs,
     legal_summarize_document_by_path,
-    python_repl, # For data analysis and complex logic
-    legal_data_fetcher, # For fetching legal data
-    legal_term_explainer,
-    contract_analyzer
+    legal_data_fetcher # The tool for fetching legal data
 ]
+
+# Conditionally add the Python interpreter based on user's tier
+if get_user_tier_capability(user_token, 'data_analysis_enabled', False):
+    tools.append(python_interpreter_with_rbac)
+    logger.info(f"Python interpreter enabled for user {user_token} (Tier: {current_user.get('tier')}).")
+else:
+    logger.info(f"Python interpreter NOT enabled for user {user_token} (Tier: {current_user.get('tier')}).")
+
 
 # Define the agent prompt
 # The prompt guides the agent on how to use its tools and respond.
 template = """
-You are a highly specialized AI assistant focused on legal, law, and constitutional matters across various states, countries, and international regions. Your primary goal is to provide accurate, concise, and helpful information, explanations, and preliminary analysis.
+You are a highly specialized AI assistant focused on legal information. Your primary goal is to provide accurate, concise, and helpful information, analysis, and insights related to laws, regulations, legal cases, and legal research.
+**IMPORTANT**: You are an AI assistant, not a legal professional. Always advise users to consult with a qualified legal professional for any legal advice or representation. Do not provide direct legal advice.
 You have access to the following tools:
 
 {tools}
 
 **Instructions for using tools:**
-- **`legal_search_web`**: Use this tool for general legal news, recent rulings, or anything that requires up-to-date information from the broader internet on legal topics.
-- **`legal_query_uploaded_docs`**: Use this tool if the user's question seems to refer to specific legal documents, contracts, or personal legal notes that might have been uploaded by them (e.g., "my will details", "summary of the case brief I uploaded"). Always specify the `user_token` when calling this tool.
-- **`legal_summarize_document_by_path`**: Use this tool if the user explicitly asks you to summarize a document and provides a file path (e.g., "summarize the court ruling at uploads/my_user/legal/ruling.pdf").
-- **`legal_data_fetcher`**: This is your primary tool for structured legal data from configured APIs.
-    - **For Case Law**: Use `api_name="LegalDB"` with `data_type="case_law_search"`. Provide `query` (e.g., case name, keywords) and `jurisdiction` (e.g., "US Federal", "California", "UK").
-    - **For Statutes/Laws**: Use `api_name="LegalDB"` with `data_type="statute_lookup"`. Provide `query` (e.g., statute title, article number) and `jurisdiction`.
-    - **For Constitutional Law**: Use `api_name="LegalDB"` with `data_type="constitutional_law"`. Provide `query` (e.g., "First Amendment", "Article 5") and `jurisdiction` (e.g., "US", "Germany").
-    - **For Regulations**: Use `api_name="GovLawAPI"` with `data_type="regulation_search"`. Provide `query` and `jurisdiction`.
-    - **For International Law/Treaties**: Use `api_name="LegalDB"` or `api_name="IntlLawAPI"` with `data_type="international_law"`. Provide `query` (e.g., "Geneva Conventions", "human rights treaty") and `jurisdiction="International"` or a specific country if applicable.
-    - **For Legal News**: Use `api_name="GovLawAPI"` with `data_type="legal_news"`. Provide `query`.
-    - Always specify the `api_name` and `data_type`, and then the relevant parameters for that specific API and data type.
-    - The output will be a JSON string. You will likely need to use `python_interpreter` to parse and analyze this JSON.
-- **`legal_term_explainer`**: Use this tool if the user asks for an explanation of a legal term (e.g., "what is res judicata?", "explain due process").
-- **`contract_analyzer`**: Use this tool if the user provides a path to a contract document and asks for specific analysis (e.g., "analyze the parties in my contract at uploads/my_user/legal/contract.docx", "summarize this agreement").
-- **`python_interpreter`**: This is a powerful tool. Use it for:
-    - **Parsing and Analyzing Fetched Data**: After using `legal_data_fetcher`, use this tool to parse the JSON output (e.g., `import json; data = json.loads(tool_output)`) and perform calculations, statistical analysis, or extract specific insights from legal datasets.
+- **`legal_search_web`**: Use this tool for general legal knowledge, recent legal news, landmark cases, or anything that requires up-to-date information from the broader internet on legal topics.
+- **`legal_query_uploaded_docs`**: Use this tool if the user's question seems to refer to specific legal documents, contracts, or personal legal notes that might have been uploaded by them (e.g., "my contract details", "summary of the legal brief I uploaded"). Always specify the `user_token` when calling this tool.
+- **`legal_summarize_document_by_path`**: Use this tool if the user explicitly asks you to summarize a document and provides a file path (e.g., "summarize the court filing at uploads/my_user/legal/filing.pdf").
+- **`legal_data_fetcher`**: Use this tool to retrieve specific legal data from configured APIs (e.g., case law databases, legislative databases). Understand its parameters (`api_name`, `data_type`, `query`, `jurisdiction`, `year`, `limit`).
+- **`python_interpreter_with_rbac`**: This is a powerful tool for users with appropriate tiers. Use it for:
+    - **Parsing and Analyzing Fetched Data**: After using `legal_data_fetcher`, use this tool to parse the JSON output (e.g., `import json; data = json.loads(tool_output)`) and perform calculations, statistical analysis, or extract specific insights from legal datasets (e.g., analyzing case outcomes, legislative trends).
     - **Complex Queries**: Any query that requires programmatic logic, conditional statements, or data manipulation that cannot be directly answered by other tools.
     - Print your final results or findings clearly to stdout so I can see them.
-
-**IMPORTANT DISCLAIMER:** Always include a strong disclaimer that you are an AI and your information is not a substitute for professional legal advice. Advise the user to consult a qualified legal professional for specific legal concerns.
 
 **General Guidelines:**
 - Prioritize using the tools to find answers.
 - If a question can be answered by multiple tools, choose the most specific and efficient one.
 - If you cannot find an answer using your tools, state that clearly and politely.
 - When responding, be concise and directly answer the user's question.
-- Cite your sources (e.g., "[From Web Search]", "[From Uploaded Docs]", "[Python Analysis]", "[From LegalDB]") when you use a tool to retrieve information or perform analysis.
-- Maintain a professional, objective, and informative tone, always prioritizing accuracy and advising professional consultation for legal matters.
+- Cite your sources (e.g., "[From Web Search]", "[From Uploaded Docs]", "[Python Analysis]", "[From Legal API]") when you use a tool to retrieve information or perform analysis.
+- **Crucially, always include a disclaimer that you are an AI and cannot provide legal advice, and that they should consult a legal professional for advice or representation.**
 
 Begin!
 
@@ -164,18 +164,20 @@ Question: {input}
 prompt = PromptTemplate.from_template(template)
 
 # Create the agent
+# The `create_react_agent` function creates an agent that uses the ReAct framework.
+# `verbose=True` is useful for debugging to see the agent's thought process.
 agent = create_react_agent(llm, tools, prompt)
 agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="Legal AI Assistant", page_icon="⚖️", layout="centered")
 st.title("Legal AI Assistant ⚖️")
-st.markdown("Your dedicated AI for legal, law, and constitutional insights across various jurisdictions. **Disclaimer: I am an AI and cannot provide legal advice. Always consult a qualified legal professional for specific legal concerns.**")
+st.markdown("Your dedicated AI for legal information and research. Ask me anything about laws, cases, or regulations, but **always consult a legal professional for legal advice.**")
 
 # Initialize chat history in Streamlit's session state
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        AIMessage(content="Hello! I am your Legal AI Assistant. How can I help you today? Remember, I am not a substitute for professional legal advice.")
+        AIMessage(content="Hello! I am your Legal AI Assistant. How can I assist you with legal information today? Remember, I am an AI and cannot provide legal advice.")
     ]
 
 # Display chat history
@@ -184,7 +186,7 @@ for message in st.session_state.messages:
         st.write(message.content)
 
 # Get user input
-user_query = st.chat_input("Ask me about legal topics...")
+user_query = st.chat_input("Ask me about legal information...")
 
 if user_query:
     # Add user's query to chat history
@@ -196,7 +198,11 @@ if user_query:
         with st.spinner("Thinking..."):
             try:
                 # Get the current user token. This is important for tools like legal_query_uploaded_docs.
-                current_user_token = get_user_token() 
+                current_user_obj = get_current_user()
+                current_user_token = current_user_obj.get('user_id') # Use user_id as token for RBAC checks
+                if not current_user_token:
+                    st.warning("Could not retrieve user token. Functionality might be limited.")
+                    current_user_token = "default" # Fallback for guest users or testing
 
                 # Prepare chat history for the agent.
                 chat_history_str = "\n".join([
@@ -219,5 +225,6 @@ if user_query:
                 logger.error(f"Agent execution failed: {e}", exc_info=True)
 
 st.markdown("---")
-st.caption(f"Current User Token: `{get_user_token()}` (for demo purposes)")
-st.caption("This agent uses web search, queries your uploaded documents, can summarize files, and provides preliminary legal information. Always consult a legal professional for legal advice.")
+st.caption(f"Current User Token: `{current_user.get('user_id', 'N/A')}` (for demo purposes)")
+st.caption("This agent uses web search, queries your uploaded documents, can summarize files, fetches data from legal APIs, and can perform data analysis based on your tier.")
+st.warning("Disclaimer: This AI assistant provides information for educational purposes only and is not a substitute for professional legal advice. Always consult with a qualified legal professional for legal advice or representation.")
