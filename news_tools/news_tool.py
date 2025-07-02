@@ -16,8 +16,9 @@ from shared_tools.import_utils import process_upload, clear_indexed_data # Used 
 from shared_tools.export_utils import export_response, export_vector_results # To be used internally by other tools, or for direct exports
 from shared_tools.vector_utils import build_vectorstore, load_docs_from_json_file, BASE_VECTOR_DIR # For testing and potential future direct use
 
-# Import Python REPL for data analysis capabilities
-from langchain_community.tools.python.tool import PythonREPLTool
+# REMOVED: from langchain_community.tools.python.tool import PythonREPLTool
+# The Python interpreter is now managed and imported via shared_tools/python_interpreter_tool.py
+# and conditionally added to the agent's toolset in the *_chat_agent_app.py files.
 
 # Import config_manager to access API configurations
 from config.config_manager import config_manager
@@ -31,11 +32,11 @@ logger = logging.getLogger(__name__)
 @tool
 def news_search_web(query: str, user_token: str = DEFAULT_USER_TOKEN, max_chars: int = 2000) -> str:
     """
-    Searches the web for general news or current events using a smart search fallback mechanism.
+    Searches the web for news-related information (news articles, breaking news, trending topics) using a smart search fallback mechanism.
     This tool wraps the generic `scrape_web` tool, providing a news-specific interface.
     
     Args:
-        query (str): The news-related search query (e.g., "latest political developments", "breakthroughs in science").
+        query (str): The news-related search query (e.g., "latest political news", "trending tech stories").
         user_token (str): The unique identifier for the user. Defaults to "default".
         max_chars (int): Maximum characters for the returned snippet. Defaults to 2000.
     
@@ -48,11 +49,11 @@ def news_search_web(query: str, user_token: str = DEFAULT_USER_TOKEN, max_chars:
 @tool
 def news_query_uploaded_docs(query: str, user_token: str = DEFAULT_USER_TOKEN, export: Optional[bool] = False, k: int = 5) -> str:
     """
-    Queries previously uploaded and indexed news documents or research papers for a user using vector similarity search.
+    Queries previously uploaded and indexed news documents for a user using vector similarity search.
     This tool wraps the generic `QueryUploadedDocs` tool, fixing the section to "news".
     
     Args:
-        query (str): The search query to find relevant news/research documents (e.g., "summary of the economic report I uploaded", "what did I save about renewable energy news").
+        query (str): The search query to find relevant news documents (e.g., "analysis of the recent election", "company X's financial reports").
         user_token (str): The unique identifier for the user. Defaults to "default".
         export (bool): If True, the results will be saved to a file in markdown format. Defaults to False.
         k (int): The number of top relevant documents to retrieve. Defaults to 5.
@@ -67,7 +68,7 @@ def news_query_uploaded_docs(query: str, user_token: str = DEFAULT_USER_TOKEN, e
 @tool
 def news_summarize_document_by_path(file_path_str: str) -> str:
     """
-    Summarizes a document related to news or current events located at the given file path.
+    Summarizes a document related to news located at the given file path.
     The file path should be accessible by the system (e.g., in the 'uploads' directory).
     This tool wraps the generic `summarize_document` tool.
     
@@ -85,7 +86,7 @@ def news_summarize_document_by_path(file_path_str: str) -> str:
         return f"Error: Document not found at '{file_path_str}'."
     
     try:
-        summary = summarize_document(file_path)
+        summary = summarize_document(file_path) # Assuming summarize_document can take Path object
         return f"Summary of '{file_path.name}':\n{summary}"
     except ValueError as e:
         logger.error(f"Error summarizing document '{file_path_str}': {e}")
@@ -96,24 +97,9 @@ def news_summarize_document_by_path(file_path_str: str) -> str:
 
 # === Advanced News Tools ===
 
-# Initialize the Python REPL tool.
-python_repl = PythonREPLTool()
-python_repl.name = "python_interpreter"
-python_repl.description = """
-Executes Python code. Use this for complex data analysis, calculations, or any task that requires programmatic logic
-on structured news data (e.g., analyzing news sentiment, topic modeling on headlines, tracking news frequency).
-Input should be a valid Python code string.
-The output will be the result of the code execution (stdout/stderr).
-You have access to common libraries like pandas, numpy, matplotlib, datetime, json, etc.
-Example:
-Action: python_interpreter
-Action Input:
-import json
-import pandas as pd
-data = json.loads(tool_output) # Assuming tool_output from news_data_fetcher
-df = pd.DataFrame(data['articles'])
-print(df['title'].head())
-"""
+# REMOVED: Direct import and initialization of PythonREPLTool.
+# The python_interpreter_with_rbac tool is now imported and added conditionally
+# in the *_chat_agent_app.py files based on RBAC.
 
 # Helper to load API configs
 def _load_news_apis() -> Dict[str, Any]:
@@ -134,36 +120,39 @@ NEWS_APIS_CONFIG = _load_news_apis()
 
 @tool
 def news_data_fetcher(
-    api_name: str,
-    data_type: str, # e.g., "top_headlines", "everything_search", "sources"
-    query: Optional[str] = None, # For search queries (keywords)
-    category: Optional[str] = None, # e.g., "business", "technology", "sports", "health"
-    country: Optional[str] = None, # e.g., "us", "gb", "de" (ISO 2-letter country code)
-    source: Optional[str] = None, # Specific news source ID (e.g., "bbc-news", "cnn")
-    language: Optional[str] = "en", # ISO 2-letter language code
-    limit: Optional[int] = None # For number of articles
+    api_name: str, 
+    data_type: str, 
+    query: Optional[str] = None, # General query for search APIs
+    source: Optional[str] = None, # News source (e.g., "BBC News", "CNN")
+    category: Optional[str] = None, # News category (e.g., "technology", "politics")
+    language: Optional[str] = "en", # Language of articles
+    country: Optional[str] = None, # Country for news
+    from_date: Optional[str] = None, # YYYY-MM-DD
+    to_date: Optional[str] = None, # YYYY-MM-DD
+    limit: Optional[int] = None
 ) -> str:
     """
-    Fetches news data (headlines, articles, sources) from configured APIs.
-    This is a placeholder and needs actual implementation to connect to real news APIs
-    like NewsAPI.org, GNews, Mediastack, etc.
+    Fetches news data from configured APIs (e.g., NewsAPI, GNews).
     
     Args:
-        api_name (str): The name of the API to use (e.g., "NewsAPI", "GNewsAPI").
+        api_name (str): The name of the API to use (e.g., "NewsAPI", "GNews").
                         This must match a 'name' field in data/news_apis.yaml.
-        data_type (str): The type of news data to fetch (e.g., "top_headlines", "everything_search", "sources").
-        query (str, optional): Keywords or phrases for searching articles.
-        category (str, optional): Specific news category (e.g., "business", "technology").
-        country (str, optional): ISO 2-letter country code for top headlines (e.g., "us", "gb").
-        source (str, optional): Specific news source ID (e.g., "bbc-news").
-        language (str, optional): ISO 2-letter language code (e.g., "en", "es"). Defaults to "en".
-        limit (int, optional): Maximum number of articles to return.
+        data_type (str): The type of data to fetch.
+                          - For NewsAPI/GNews: "top_headlines", "everything".
+        query (str, optional): The search query for articles.
+        source (str, optional): Specific news source (e.g., "bbc-news").
+        category (str, optional): News category (e.g., "technology", "business").
+        language (str, optional): Language of the content (e.g., "en", "fr"). Defaults to "en".
+        country (str, optional): Country for top headlines (e.g., "us", "gb").
+        from_date (str, optional): Start date for articles (YYYY-MM-DD).
+        to_date (str, optional): End date for articles (YYYY-MM-DD).
+        limit (int, optional): Maximum number of records to return.
         
     Returns:
-        str: A JSON string of the fetched news data or an error message.
-             The agent can then use `python_interpreter` to parse and analyze this JSON.
+        str: A JSON string of the fetched data or an error message.
+             The agent can then use `python_interpreter_with_rbac` to parse and analyze this JSON.
     """
-    logger.info(f"Tool: news_data_fetcher called for API: {api_name}, data_type: {data_type}, query: '{query}', category: '{category}', country: '{country}', source: '{source}'")
+    logger.info(f"Tool: news_data_fetcher called for API: {api_name}, data_type: {data_type}, query: {query}, source: {source}, category: {category}")
 
     api_info = NEWS_APIS_CONFIG.get(api_name)
     if not api_info:
@@ -181,63 +170,78 @@ def news_data_fetcher(
         secret_key_path = api_key_value_ref.split("load_from_secrets.")[1]
         api_key = config_manager.get_secret(secret_key_path)
     
-    if key_name and api_key:
-        if key_name.lower() == "authorization": # Handle Bearer tokens
-            headers["Authorization"] = f"Bearer {api_key}"
-        else:
-            default_params[key_name] = api_key
-    elif key_name and not api_key:
+    if key_name and not api_key:
         logger.warning(f"API key for '{api_name}' not found in secrets.toml. Proceeding without key if API allows.")
 
     params = {**default_params} # Start with default parameters
-    url = endpoint
+    if api_key and key_name:
+        params[key_name] = api_key
+    
+    url = endpoint # Base URL, might be modified
 
     try:
-        # --- Placeholder/Mock Implementations ---
+        # --- NewsAPI ---
         if api_name == "NewsAPI":
+            if not api_key: return "Error: API key is required for NewsAPI."
+            
             if data_type == "top_headlines":
-                return json.dumps({
-                    "status": "ok",
-                    "totalResults": 2,
-                    "articles": [
-                        {"title": f"Mock Headline: {query or 'Global Economy Update'}", "source": {"name": "Mock News"}, "publishedAt": "2024-07-02T10:00:00Z", "description": "A mock description of a top headline.", "url": "http://mocknews.com/article1"},
-                        {"title": "Another Mock Headline", "source": {"name": "Mock News"}, "publishedAt": "2024-07-02T09:30:00Z", "description": "Another mock description.", "url": "http://mocknews.com/article2"}
-                    ][:limit if limit else 2]
-                })
-            elif data_type == "everything_search":
-                if not query: return "Error: 'query' is required for everything_search."
-                return json.dumps({
-                    "status": "ok",
-                    "totalResults": 1,
-                    "articles": [
-                        {"title": f"Search Result for '{query}'", "source": {"name": "Mock Search News"}, "publishedAt": "2024-07-01T15:00:00Z", "description": f"A mock article containing information about '{query}'.", "url": "http://mocksearch.com/article_query"}
-                    ][:limit if limit else 1]
-                })
-            elif data_type == "sources":
-                return json.dumps({
-                    "status": "ok",
-                    "sources": [
-                        {"id": "bbc-news", "name": "BBC News", "description": "Provides news, sport, business, arts, culture and more.", "category": "general"},
-                        {"id": "cnn", "name": "CNN", "description": "View the latest news and breaking news today for U.S., world, weather, entertainment, politics and health.", "category": "general"}
-                    ]
-                })
+                url = f"{endpoint}{api_info['functions']['TOP_HEADLINES']['path']}"
+                if query: params['q'] = query
+                if category: params['category'] = category
+                if language: params['language'] = language
+                if country: params['country'] = country
+            elif data_type == "everything":
+                if not query: return "Error: 'query' is required for NewsAPI 'everything' search."
+                url = f"{endpoint}{api_info['functions']['EVERYTHING']['path']}"
+                params['q'] = query
+                if from_date: params['from'] = from_date
+                if to_date: params['to'] = to_date
+                if language: params['language'] = language
+                if source: params['sources'] = source
             else:
                 return f"Error: Unsupported data_type '{data_type}' for NewsAPI."
-        
-        elif api_name == "GNewsAPI":
+            
+            response = requests.get(url, headers=headers, params=params, timeout=request_timeout)
+
+        # --- GNews (Placeholder - Similar to NewsAPI but with different parameters) ---
+        elif api_name == "GNews":
+            if not api_key: return "Error: API key is required for GNews API."
+            
             if data_type == "top_headlines":
-                return json.dumps({
-                    "totalArticles": 2,
-                    "articles": [
-                        {"title": f"GNews Mock Headline: {query or 'Tech Innovation'}", "description": "A mock GNews headline about tech.", "source": {"name": "GNews Source"}, "publishedAt": "2024-07-02T11:00:00Z", "url": "http://gnews.com/article1"},
-                        {"title": "Another GNews Mock Headline", "description": "Another mock GNews description.", "source": {"name": "GNews Source"}, "publishedAt": "2024-07-02T10:45:00Z", "url": "http://gnews.com/article2"}
-                    ][:limit if limit else 2]
-                })
+                url = f"{endpoint}{api_info['functions']['TOP_HEADLINES']['path']}"
+                if query: params['q'] = query
+                if category: params['category'] = category
+                if language: params['lang'] = language # GNews uses 'lang'
+                if country: params['country'] = country
+            elif data_type == "everything":
+                if not query: return "Error: 'query' is required for GNews 'everything' search."
+                url = f"{endpoint}{api_info['functions']['EVERYTHING']['path']}"
+                params['q'] = query
+                if from_date: params['from'] = from_date
+                if to_date: params['to'] = to_date
+                if language: params['lang'] = language
             else:
-                return f"Error: Unsupported data_type '{data_type}' for GNewsAPI."
+                return f"Error: Unsupported data_type '{data_type}' for GNews."
+            
+            response = requests.get(url, headers=headers, params=params, timeout=request_timeout)
 
         else:
             return f"Error: API '{api_name}' is not supported by news_data_fetcher."
+
+        response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
+        data = response.json()
+        
+        # Apply limit if specified and data is a list (or has a list-like key)
+        if limit and isinstance(data, dict):
+            # NewsAPI/GNews use 'articles'
+            for key in ['articles']:
+                if key in data and isinstance(data[key], list):
+                    data[key] = data[key][:limit]
+                    break
+        elif limit and isinstance(data, list):
+            data = data[:limit]
+
+        return json.dumps(data, ensure_ascii=False, indent=2)
 
     except requests.exceptions.RequestException as req_e:
         logger.error(f"API request failed for {api_name} ({data_type}): {req_e}")
@@ -249,36 +253,6 @@ def news_data_fetcher(
         logger.error(f"Error processing {api_name} response or request setup: {e}", exc_info=True)
         return f"An unexpected error occurred: {e}"
 
-@tool
-def trending_news_checker(category: Optional[str] = "general", country: Optional[str] = "us") -> str:
-    """
-    Identifies currently trending news topics or top headlines for a given category and country.
-    
-    Args:
-        category (str, optional): The news category (e.g., "business", "technology", "sports", "health"). Defaults to "general".
-        country (str, optional): The ISO 2-letter country code (e.g., "us", "gb", "de"). Defaults to "us".
-        
-    Returns:
-        str: A list of trending news headlines or a message indicating no trending news.
-    """
-    logger.info(f"Tool: trending_news_checker called for category: '{category}', country: '{country}'")
-    # This tool leverages news_data_fetcher to get top headlines
-    result = news_data_fetcher(api_name="NewsAPI", data_type="top_headlines", category=category, country=country, limit=5)
-    
-    try:
-        parsed_data = json.loads(result)
-        articles = parsed_data.get('articles', [])
-        if articles:
-            trending_headlines = [f"- {article.get('title')} (Source: {article.get('source', {}).get('name')})" for article in articles]
-            return f"**Trending News in {country.upper()} ({category.capitalize()}):**\n" + "\n".join(trending_headlines)
-        else:
-            return f"No trending news found for category '{category}' in '{country.upper()}' at this time."
-    except json.JSONDecodeError:
-        return f"Could not parse news data: {result}"
-    except Exception as e:
-        logger.error(f"Error processing trending news: {e}", exc_info=True)
-        return f"An error occurred while checking trending news: {e}"
-
 
 # CLI Test (optional)
 if __name__ == "__main__":
@@ -287,6 +261,9 @@ if __name__ == "__main__":
     import os
     from config.config_manager import ConfigManager # Import ConfigManager for testing setup
     from shared_tools.llm_embedding_utils import get_llm # For testing summarization with a real LLM
+    # Import the RBAC-enabled Python interpreter tool for testing purposes here
+    from shared_tools.python_interpreter_tool import python_interpreter_with_rbac
+    from unittest.mock import MagicMock
 
     logging.basicConfig(level=logging.INFO)
 
@@ -298,75 +275,146 @@ if __name__ == "__main__":
             self.ollama = {"api_url": "http://localhost:11434", "model": "llama3"}
             self.serpapi = {"api_key": "YOUR_SERPAPI_KEY"} # For scrape_web testing
             self.google_custom_search = {"api_key": "YOUR_GOOGLE_CUSTOM_SEARCH_API_KEY"} # For scrape_web testing
-            self.newsapi_api_key = "YOUR_NEWSAPI_API_KEY" # For NewsAPI.org
-            self.gnews_api_key = "YOUR_GNEWS_API_KEY" # For GNews API
+            self.newsapi_api_key = "YOUR_NEWSAPI_API_KEY" # For NewsAPI
+            self.gnews_api_key = "YOUR_GNEWS_API_KEY" # For GNews
+            # Mock user tokens for testing RBAC
+            self.user_tokens = {
+                "free_user_token": "mock_free_token",
+                "pro_user_token": "mock_pro_token",
+                "admin_user_token": "mock_admin_token"
+            }
 
-    try:
-        # Create dummy config.yml
-        dummy_data_dir = Path("data")
-        dummy_data_dir.mkdir(exist_ok=True)
-        dummy_config_path = dummy_data_dir / "config.yml"
-        with open(dummy_config_path, "w") as f:
-            f.write("""
-llm:
-  provider: openai
-  model: gpt-3.5-turbo
-  temperature: 0.5
-rag:
-  chunk_size: 500
-  chunk_overlap: 50
-web_scraping:
-  user_agent: Mozilla/5.0 (Test; Python)
-  timeout_seconds: 5
-""")
-        # Create dummy API YAMLs for scraper_tool and news_data_fetcher
-        dummy_sports_apis_path = dummy_data_dir / "sports_apis.yaml"
-        with open(dummy_sports_apis_path, "w") as f:
-            f.write("""
-search_apis:
-  - name: "SerpAPI"
-    type: "search"
-    endpoint: "https://serpapi.com/search"
-    key_name: "api_key"
-    key_value: "load_from_secrets.serpapi_api_key"
-    query_param: "q"
-    default_params:
-      engine: "google"
-      num: 3
-            """)
-        dummy_media_apis_path = dummy_data_dir / "media_apis.yaml"
-        with open(dummy_media_apis_path, "w") as f:
-            f.write("""
-apis: []
-search_apis: []
-""")
-        dummy_finance_apis_path = dummy_data_dir / "finance_apis.yaml"
-        with open(dummy_finance_apis_path, "w") as f:
-            f.write("""
-apis: []
-search_apis: []
-""")
-        dummy_medical_apis_path = dummy_data_dir / "medical_apis.yaml"
-        with open(dummy_medical_apis_path, "w") as f:
-            f.write("""
-apis: []
-search_apis: []
-""")
-        dummy_legal_apis_path = dummy_data_dir / "legal_apis.yaml"
-        with open(dummy_legal_apis_path, "w") as f:
-            f.write("""
-apis: []
-search_apis: []
-""")
-        dummy_weather_apis_path = dummy_data_dir / "weather_apis.yaml"
-        with open(dummy_weather_apis_path, "w") as f:
-            f.write("""
-apis: []
-search_apis: []
-""")
-        dummy_news_apis_path = dummy_data_dir / "news_apis.yaml"
-        with open(dummy_news_apis_path, "w") as f:
-            f.write("""
+        def get(self, key, default=None):
+            parts = key.split('.')
+            val = self
+            for part in parts:
+                if hasattr(val, part):
+                    val = getattr(val, part)
+                elif isinstance(val, dict) and part in val:
+                    val = val[part]
+                else:
+                    return default
+            return val
+
+    # Mock user_manager.find_user_by_token and get_user_tier_capability for testing RBAC
+    class MockUserManager:
+        _mock_users = {
+            "mock_free_token": {"username": "FreeUser", "email": "free@example.com", "tier": "free", "roles": ["user"]},
+            "mock_pro_token": {"username": "ProUser", "email": "pro@example.com", "tier": "pro", "roles": ["user"]},
+            "mock_admin_token": {"username": "AdminUser", "email": "admin@example.com", "tier": "admin", "roles": ["user", "admin"]},
+            "nonexistent_token": None
+        }
+        def find_user_by_token(self, token: str) -> Optional[Dict[str, Any]]:
+            return self._mock_users.get(token)
+
+        def get_user_tier_capability(self, user_token: Optional[str], capability_key: str, default_value: Any = None) -> Any:
+            user = self.find_user_by_token(user_token)
+            user_tier = user.get('tier', 'free') if user else 'free'
+            user_roles = user.get('roles', []) if user else []
+
+            if 'admin' in user_roles:
+                if isinstance(default_value, bool): return True
+                if isinstance(default_value, (int, float)): return float('inf')
+                return default_value
+            
+            mock_tier_configs = {
+                "free": {
+                    "data_analysis_enabled": False,
+                    "web_search_limit_chars": 500,
+                    "web_search_max_results": 2
+                },
+                "pro": {
+                    "data_analysis_enabled": True,
+                    "web_search_limit_chars": 3000,
+                    "web_search_max_results": 7
+                },
+                "elite": {
+                    "data_analysis_enabled": True,
+                    "web_search_limit_chars": 5000,
+                    "web_search_max_results": 10
+                },
+                "premium": {
+                    "data_analysis_enabled": True,
+                    "web_search_limit_chars": 10000,
+                    "web_search_max_results": 15
+                }
+            }
+            tier_config = mock_tier_configs.get(user_tier, {})
+            return tier_config.get(capability_key, default_value)
+
+    # Patch the actual imports for testing
+    import sys
+    sys.modules['utils.user_manager'] = MockUserManager()
+    # Mock config_manager to return the test config
+    class MockConfigManager:
+        _instance = None
+        _is_loaded = False
+        def __init__(self):
+            if MockConfigManager._instance is not None:
+                raise Exception("ConfigManager is a singleton. Use get_instance().")
+            MockConfigManager._instance = self
+            self._config_data = {
+                'llm': {
+                    'max_summary_input_chars': 10000 # Default for LLM section
+                },
+                'rag': {
+                    'chunk_size': 500,
+                    'chunk_overlap': 50,
+                    'max_query_results_k': 10
+                },
+                'web_scraping': {
+                    'user_agent': 'Mozilla/5.0 (Test; Python)',
+                    'timeout_seconds': 5,
+                    'max_search_results': 5 # Default for config
+                },
+                'tiers': { # These are just for the mock, actual tiers are in the user_manager mock
+                    'free': {}, 'basic': {}, 'pro': {}, 'elite': {}, 'premium': {}
+                }
+            }
+            self._is_loaded = True
+        
+        def get(self, key, default=None):
+            parts = key.split('.')
+            val = self._config_data
+            for part in parts:
+                if isinstance(val, dict) and part in val:
+                    val = val[part]
+                else:
+                    return default
+            return val
+        
+        def get_secret(self, key, default=None):
+            return st.secrets.get(key, default)
+
+    # Replace the actual config_manager with the mock
+    sys.modules['config.config_manager'].config_manager = MockConfigManager()
+    sys.modules['config.config_manager'].ConfigManager = MockConfigManager # Also replace the class for singleton check
+
+    if not hasattr(st, 'secrets'):
+        st.secrets = MockSecrets()
+        print("Mocked st.secrets for standalone testing.")
+    
+    # Mock LLM for summarization
+    class MockLLM:
+        def invoke(self, prompt: str) -> MagicMock:
+            mock_content = f"Mock summary of the provided text. Original content length: {len(prompt.split('Document Content:')[1].strip())} characters."
+            mock_message = MagicMock()
+            mock_message.content = mock_content
+            return mock_message
+    
+    import shared_tools.llm_embedding_utils
+    shared_tools.llm_embedding_utils.get_llm = lambda: MockLLM()
+
+
+    print("\n--- Testing news_tool functions (updated) ---")
+    test_user = "test_user_news"
+    
+    # Setup dummy API YAMLs for testing
+    dummy_data_dir = Path("data")
+    dummy_data_dir.mkdir(exist_ok=True)
+    dummy_news_apis_path = dummy_data_dir / "news_apis.yaml"
+    with open(dummy_news_apis_path, "w") as f:
+        f.write("""
 apis:
   - name: "NewsAPI"
     type: "news"
@@ -376,12 +424,15 @@ apis:
     headers: {}
     default_params: {}
     functions:
-      top_headlines: {path: "top-headlines"}
-      everything_search: {path: "everything"}
-      sources: {path: "sources"}
+      TOP_HEADLINES:
+        path: "top-headlines"
+        params: {q: "", category: "", language: "en", country: ""}
+      EVERYTHING:
+        path: "everything"
+        params: {q: "", from: "", to: "", language: "en", sources: ""}
     query_param: "q"
 
-  - name: "GNewsAPI"
+  - name: "GNews"
     type: "news"
     endpoint: "https://gnews.io/api/v4/"
     key_name: "token"
@@ -389,112 +440,100 @@ apis:
     headers: {}
     default_params: {}
     functions:
-      top_headlines: {path: "top-headlines"}
+      TOP_HEADLINES:
+        path: "top-headlines"
+        params: {q: "", category: "", lang: "en", country: ""}
+      EVERYTHING:
+        path: "search"
+        params: {q: "", from: "", to: "", lang: "en"}
+    query_param: "q"
+
+search_apis:
+  - name: "NewsSearchEngine"
+    type: "search"
+    endpoint: "https://api.example.com/news_search/search"
+    key_name: "apiKey"
+    key_value: "load_from_secrets.news_search_api_key"
+    headers: {}
+    default_params:
+      sort_by: "publishedAt"
     query_param: "q"
 """)
+    # Re-load config after creating dummy file
+    sys.modules['config.config_manager'].config_manager = MockConfigManager()
+    sys.modules['config.config_manager'].ConfigManager = MockConfigManager # Also replace the class for singleton check
+    global NEWS_APIS_CONFIG
+    NEWS_APIS_CONFIG = _load_news_apis()
+    print("Dummy news_apis.yaml created and config reloaded for testing.")
 
-        if not hasattr(st, 'secrets'):
-            st.secrets = MockSecrets()
-            print("Mocked st.secrets for standalone testing.")
-        
-        # Ensure config_manager is a fresh instance for this test run
-        ConfigManager._instance = None # Reset the singleton
-        ConfigManager._is_loaded = False
-        config_manager = ConfigManager()
-        print("ConfigManager initialized for testing.")
 
-    except Exception as e:
-        print(f"Could not initialize ConfigManager for testing: {e}. Skipping API/LLM-dependent tests.")
-        config_manager = None
-
-    print("\n--- Testing news_tool functions ---")
-    test_user = "test_user_news"
-    
     if config_manager:
-        # Test news_search_web
+        # Test news_search_web (already works, just for completeness)
         print("\n--- Testing news_search_web ---")
-        search_query = "latest developments in AI ethics"
+        search_query = "latest political news"
         search_result = news_search_web(search_query, user_token=test_user)
         print(f"Search Result for '{search_query}':\n{search_result[:500]}...")
 
-        # Prepare dummy data for news_query_uploaded_docs
-        print("\n--- Preparing dummy data for news_query_uploaded_docs ---")
-        dummy_json_path = Path("temp_news_docs.json")
-        dummy_data = [
-            {"id": 1, "text": "An article discussing the rise of generative AI in content creation.", "topic": "AI"},
-            {"id": 2, "text": "Summary of a report on global climate change initiatives.", "topic": "environment"},
-            {"id": 3, "text": "My notes on the recent political election results.", "topic": "politics"}
-        ]
-        with open(dummy_json_path, "w", encoding="utf-8") as f:
-            json.dump(dummy_data, f)
+        # Mock requests.get for API calls
+        class MockResponse:
+            def __init__(self, json_data, status_code=200):
+                self._json_data = json_data
+                self.status_code = status_code
+                self.text = json.dumps(json_data)
+            def json(self):
+                return self._json_data
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise requests.exceptions.HTTPError(f"HTTP Error: {self.status_code}", response=self)
+
+        original_requests_get = requests.get
+        requests.get = MagicMock(side_effect=[
+            MockResponse({"articles": [{"title": "Election Results", "source": {"name": "CNN"}}], "status": "ok"}),
+            MockResponse({"articles": [{"title": "Tech Trends", "source": {"name": "The Verge"}}], "status": "ok"}),
+        ])
+
+        # Test news_data_fetcher - NewsAPI
+        print("\n--- Testing news_data_fetcher (NewsAPI) ---")
+        newsapi_headlines = news_data_fetcher(api_name="NewsAPI", data_type="top_headlines", query="politics", country="us")
+        print(f"NewsAPI Headlines 'politics': {newsapi_headlines}")
+        newsapi_everything = news_data_fetcher(api_name="NewsAPI", data_type="everything", query="AI ethics", from_date="2024-06-01", to_date="2024-06-30")
+        print(f"NewsAPI Everything 'AI ethics': {newsapi_everything}")
+
+        # Test news_data_fetcher - GNews
+        print("\n--- Testing news_data_fetcher (GNews) ---")
+        gnews_headlines = news_data_fetcher(api_name="GNews", data_type="top_headlines", query="economy", language="en")
+        print(f"GNews Headlines 'economy': {gnews_headlines}")
         
-        # Load documents from the dummy JSON for build_vectorstore
-        loaded_docs_for_vector = load_docs_from_json_file(dummy_json_path)
-        for i, doc in enumerate(loaded_docs_for_vector):
-            doc.page_content = dummy_data[i]["text"]
+        # Restore original requests.get
+        requests.get = original_requests_get
 
-        build_vectorstore(test_user, NEWS_SECTION, loaded_docs_for_vector, chunk_size=200, chunk_overlap=0)
-        print(f"Vectorstore built for {NEWS_SECTION}.")
-
-        # Test news_query_uploaded_docs
-        print("\n--- Testing news_query_uploaded_docs ---")
-        doc_query = "What did I save about AI?"
-        doc_results = news_query_uploaded_docs(doc_query, user_token=test_user)
-        print(f"Query uploaded docs for '{doc_query}':\n{doc_results}")
-
-        # Test news_summarize_document_by_path
-        print("\n--- Testing news_summarize_document_by_path ---")
-        # Create a dummy upload directory and file
-        test_upload_dir = Path("uploads") / test_user / NEWS_SECTION
-        test_upload_dir.mkdir(parents=True, exist_ok=True)
-        summarize_file_path = test_upload_dir / "news_brief.txt"
-        with open(summarize_file_path, "w") as f:
-            f.write("This news brief covers the latest quarterly earnings reports from major tech companies. " * 30 + 
-                    "Apple reported strong iPhone sales, while Google saw growth in its cloud division. " * 20 +
-                    "Amazon's e-commerce revenue slightly missed expectations but AWS continued its robust performance." * 25)
-        print(f"Created dummy file for summarization: {summarize_file_path}")
-
-        summary_result = news_summarize_document_by_path(str(summarize_file_path))
-        print(summary_result)
-
-        # Test news_data_fetcher (mocked)
-        print("\n--- Testing news_data_fetcher (mocked) ---")
-        top_headlines_us = news_data_fetcher(api_name="NewsAPI", data_type="top_headlines", country="us")
-        print(f"Top Headlines (US, NewsAPI): {top_headlines_us[:200]}...")
-        search_ai = news_data_fetcher(api_name="NewsAPI", data_type="everything_search", query="artificial intelligence")
-        print(f"Everything Search (AI, NewsAPI): {search_ai[:200]}...")
-        gnews_headlines = news_data_fetcher(api_name="GNewsAPI", data_type="top_headlines", category="technology")
-        print(f"GNews Top Headlines (Technology): {gnews_headlines[:200]}...")
-
-        # Test trending_news_checker
-        print("\n--- Testing trending_news_checker ---")
-        trending_tech_news = trending_news_checker(category="technology", country="gb")
-        print(f"Trending Tech News (GB): {trending_tech_news}")
-
-        # Test python_interpreter (example with mock data)
-        print("\n--- Testing python_interpreter with mock data ---")
-        python_code_news_data = """
+        # Test python_interpreter_with_rbac with mock data (example)
+        print("\n--- Testing python_interpreter_with_rbac with mock data ---")
+        python_code_news = f"""
 import json
-import pandas as pd
-mock_articles = '''{
-    "articles": [
-        {"title": "AI in Healthcare", "source": "Tech News", "sentiment": "positive"},
-        {"title": "Market Downturn", "source": "Finance Daily", "sentiment": "negative"},
-        {"title": "New Sports League", "source": "Sports Weekly", "sentiment": "positive"}
-    ]
-}'''
-data = json.loads(mock_articles)
-df = pd.DataFrame(data['articles'])
-sentiment_counts = df['sentiment'].value_counts()
-print(f"Article sentiment distribution:\n{sentiment_counts}")
+data = {newsapi_headlines}
+first_article = data.get('articles', [{{}}])[0]
+print(f"Article Title: {{first_article.get('title')}}")
+print(f"Source: {{first_article.get('source', {{}}).get('name')}}")
 """
-        print(f"Executing Python code:\n{python_code_news_data}")
+        print(f"Executing Python code:\n{python_code_news}")
         try:
-            repl_output = python_repl.run(python_code_news_data)
-            print(f"Python REPL Output:\n{repl_output}")
-        except Exception as e:
-            print(f"Error executing Python REPL: {e}. Make sure pandas, numpy, json are installed.")
+            # Test with a user who has data_analysis_enabled
+            pro_user_token = st.secrets.user_tokens["pro_user_token"]
+            repl_output = python_interpreter_with_rbac(code=python_code_news, user_token=pro_user_token)
+            print(f"Python REPL Output (Pro User):\n{repl_output}")
+            assert "Article Title: Election Results" in repl_output
+            assert "Source: CNN" in repl_output
 
+            # Test with a user who does NOT have data_analysis_enabled
+            free_user_token = st.secrets.user_tokens["free_user_token"]
+            repl_output_denied = python_interpreter_with_rbac(code=python_code_news, user_token=free_user_token)
+            print(f"Python REPL Output (Free User):\n{repl_output_denied}")
+            assert "Access Denied" in repl_output_denied
+
+        except Exception as e:
+            print(f"Error executing Python REPL: {e}.")
+            print("Make sure pandas, numpy, json are installed if you're running complex analysis.")
 
     else:
         print("Skipping news_tool tests due to ConfigManager issues or missing API keys.")
@@ -517,18 +556,22 @@ print(f"Article sentiment distribution:\n{sentiment_counts}")
         dummy_sports_apis_path = dummy_data_dir / "sports_apis.yaml"
         dummy_media_apis_path = dummy_data_dir / "media_apis.yaml"
         dummy_finance_apis_path = dummy_data_dir / "finance_apis.yaml"
+        dummy_news_apis_path = dummy_data_dir / "news_apis.yaml"
+        dummy_weather_apis_path = dummy_data_dir / "weather_apis.yaml"
+        dummy_entertainment_apis_path = dummy_data_dir / "entertainment_apis.yaml"
         dummy_medical_apis_path = dummy_data_dir / "medical_apis.yaml"
         dummy_legal_apis_path = dummy_data_dir / "legal_apis.yaml"
-        dummy_weather_apis_path = dummy_data_dir / "weather_apis.yaml"
-        dummy_news_apis_path = dummy_data_dir / "news_apis.yaml"
+
 
         if dummy_config_path.exists(): os.remove(dummy_config_path)
         if dummy_sports_apis_path.exists(): os.remove(dummy_sports_apis_path)
         if dummy_media_apis_path.exists(): os.remove(dummy_media_apis_path)
         if dummy_finance_apis_path.exists(): os.remove(dummy_finance_apis_path)
+        if dummy_news_apis_path.exists(): os.remove(dummy_news_apis_path)
+        if dummy_weather_apis_path.exists(): os.remove(dummy_weather_apis_path)
+        if dummy_entertainment_apis_path.exists(): os.remove(dummy_entertainment_apis_path)
         if dummy_medical_apis_path.exists(): os.remove(dummy_medical_apis_path)
         if dummy_legal_apis_path.exists(): os.remove(dummy_legal_apis_path)
-        if dummy_weather_apis_path.exists(): os.remove(dummy_weather_apis_path)
-        if dummy_news_apis_path.exists(): os.remove(dummy_news_apis_path)
+
         if not os.listdir(dummy_data_dir):
             os.rmdir(dummy_data_dir)
