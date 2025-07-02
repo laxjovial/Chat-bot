@@ -1,0 +1,67 @@
+# data/finance_apis.yaml
+# Configuration for various financial data APIs
+
+apis:
+  - name: "AlphaVantage"
+    type: "finance"
+    endpoint: "https://www.alphavantage.co/query"
+    key_name: "apikey"
+    key_value: "load_from_secrets.alphavantage_api_key" # Key will be loaded from .streamlit/secrets.toml
+    headers: {}
+    default_params: {}
+    # Common Alpha Vantage functions and their parameters
+    functions:
+      TIME_SERIES_DAILY:
+        params:
+          function: "TIME_SERIES_DAILY"
+          symbol: "" # Placeholder for stock symbol
+          outputsize: "compact" # "compact" or "full"
+          datatype: "json"
+      GLOBAL_QUOTE:
+        params:
+          function: "GLOBAL_QUOTE"
+          symbol: ""
+          datatype: "json"
+      COMPANY_OVERVIEW:
+        params:
+          function: "OVERVIEW"
+          symbol: ""
+          datatype: "json"
+    query_param: "symbol" # Primary query parameter for many functions
+
+  # Add more finance APIs here (e.g., Finnhub, IEX Cloud, FRED for economic data)
+  # Example for a hypothetical Finnhub API for real-time quotes
+  # - name: "Finnhub"
+  #   type: "finance"
+  #   endpoint: "https://finnhub.io/api/v1/"
+  #   key_name: "token"
+  #   key_value: "load_from_secrets.finnhub_api_key"
+  #   headers: {}
+  #   default_params: {}
+  #   functions:
+  #     QUOTE:
+  #       path: "quote" # Path relative to endpoint
+  #       params:
+  #         symbol: ""
+  #     CANDLES:
+  #       path: "stock/candle"
+  #       params:
+  #         symbol: ""
+  #         resolution: "D" # Daily
+  #         from: "" # Unix timestamp
+  #         to: "" # Unix timestamp
+  #   query_param: "symbol"
+
+search_apis: # These can be shared search APIs, or finance-specific ones (e.g., financial news search)
+  # You might want to add specific financial news APIs here if needed,
+  # or rely on the general search APIs already configured in sports_apis.yaml/media_apis.yaml
+  # (which are loaded by scraper_tool).
+  - name: "FinancialNewsSearch"
+    type: "search"
+    endpoint: "https://api.example.com/financial_news/search"
+    key_name: "api_key"
+    key_value: "load_from_secrets.financial_news_api_key"
+    headers: {}
+    default_params:
+      sort_by: "publishedAt"
+    query_param: "q"
