@@ -1,4 +1,5 @@
-pip install streamlit phonenumbers
+streamlit 
+phonenumbers
 # LangChain core & ecosystem
 langchain
 langchain-core
